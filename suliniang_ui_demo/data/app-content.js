@@ -1,0 +1,129 @@
+window.SULINIANG_CONTENT = {
+  city: "苏州",
+  defaultSpotId: "yushui",
+  quickQuestions: [
+    "帮我安排半天苏州路线",
+    "苏州有什么好吃的？",
+    "拙政园先看哪里？",
+    "带老人少走路怎么玩？",
+  ],
+  qa: [
+    {
+      id: "food",
+      keywords: ["好吃", "美食", "吃", "午餐", "小吃", "汤面"],
+      title: "我给你挑一条轻松的苏州味道线。",
+      body: "上午先慢逛拙政园，中午转到平江路，苏式汤面、桂花糖粥和评弹茶馆都能接上，步行压力不大。",
+      tags: ["苏式汤面", "桂花糖粥", "生煎", "评弹茶馆"],
+      actions: [
+        { label: "加入路线", screen: "route", routeId: "garden-food" },
+        { label: "附近看看", screen: "nearby" },
+      ],
+    },
+    {
+      id: "route",
+      keywords: ["路线", "半天", "一天", "老人", "少走路", "安排"],
+      title: "半天轻松线适合先从园林开始。",
+      body: "推荐拙政园精讲、平江路午餐、可选虎丘外观或评弹茶馆。每段留出缓冲，适合比赛演示里的真实行程闭环。",
+      tags: ["拙政园", "平江路", "虎丘", "少走路"],
+      actions: [
+        { label: "生成路线", screen: "route", routeId: "garden-food" },
+        { label: "查看行程", screen: "trip" },
+      ],
+    },
+    {
+      id: "guide",
+      keywords: ["拙政园", "导览", "讲解", "先看", "园林", "景点"],
+      title: "拙政园可以先抓住水、亭、诗三个线索。",
+      body: "从远香堂看园林中轴，再到与谁同坐轩听苏东坡词意，小飞虹适合讲桥和水院空间。",
+      tags: ["远香堂", "与谁同坐轩", "小飞虹", "诗意讲解"],
+      actions: [
+        { label: "开始导览", screen: "guide" },
+        { label: "诗意讲法", screen: "spot", spotId: "yushui" },
+      ],
+    },
+  ],
+  routes: [
+    {
+      id: "garden-food",
+      title: "园林与古城轻松线",
+      summary: "少走路、重体验，适合半天到一天的比赛演示主线。",
+      preferences: ["半天", "园林", "美食", "少走路"],
+      note: "带老人，想轻松一点，中午想吃苏州小吃。",
+      nodes: [
+        {
+          time: "09:30",
+          title: "拙政园",
+          description: "苏州园林代表，内置精讲样板。",
+          action: { label: "开始导览", screen: "guide" },
+        },
+        {
+          time: "12:00",
+          title: "平江路",
+          description: "小吃、咖啡、老街散步。",
+          action: { label: "查看推荐", screen: "nearby" },
+        },
+        {
+          time: "15:00",
+          title: "虎丘",
+          description: "历史遗迹，作为可扩展示例。",
+          action: { label: "查看介绍", video: "speaking_loop.mp4" },
+        },
+      ],
+    },
+  ],
+  spots: [
+    {
+      id: "yuanxiang",
+      name: "远香堂",
+      x: "48%",
+      y: "46%",
+      summary: "拙政园中部主厅，适合讲荷风、借景和园林开合。",
+      story: "远香堂取周敦颐《爱莲说》“香远益清”之意。站在这里看水面、荷风和四面景窗，能感到园林把诗句变成了空间。",
+    },
+    {
+      id: "yushui",
+      name: "与谁同坐轩",
+      x: "56%",
+      y: "44%",
+      summary: "扇形小轩，是最适合苏丽娘诗意讲解的点位。",
+      story: "这座扇形小轩，名字出自苏东坡的词：“与谁同坐？明月、清风、我。”窗、梁、石凳都呼应扇面，像把清风明月收进园中。",
+    },
+    {
+      id: "xiaofeihong",
+      name: "小飞虹",
+      x: "62%",
+      y: "58%",
+      summary: "水院中的廊桥，适合讲一步一景和园林动线。",
+      story: "小飞虹像一笔轻轻架在水面上的桥。走过它时，视线会从水、廊、亭之间转换，这就是苏州园林最会安排的“移步换景”。",
+    },
+    {
+      id: "xiangzhou",
+      name: "香洲",
+      x: "70%",
+      y: "50%",
+      summary: "船舫形建筑，适合连接水乡意象。",
+      story: "香洲像一艘停在园中的船。它不是真的要远行，而是让人坐在园里，也能想象江南水路和荷香风动。",
+    },
+    {
+      id: "daishuang",
+      name: "待霜亭",
+      x: "36%",
+      y: "64%",
+      summary: "适合秋季、植物和时令讲解。",
+      story: "待霜亭的名字有等待季节变化的意味。苏州园林不只看建筑，也看花木随时令转换，把一天、一季都写进游览体验里。",
+    },
+  ],
+  nearby: [
+    {
+      id: "pingjiang-food",
+      category: "午餐建议",
+      title: "平江路小吃慢逛",
+      description: "适合从拙政园出来后步行或短途打车过去。",
+      items: [
+        { title: "苏式汤面", description: "清汤细面，适合轻松午餐。", time: "12:10" },
+        { title: "桂花糖粥", description: "甜口小食，适合边逛边吃。", time: "12:45" },
+        { title: "评弹茶馆", description: "可作为昆曲、江南文化延展体验。", time: "13:30" },
+      ],
+    },
+  ],
+};

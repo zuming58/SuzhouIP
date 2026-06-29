@@ -1,0 +1,30 @@
+# Local tooling and scratch files
+.tools/
+.tmp_*/
+.tmp_*.py
+*.tmp
+
+# Browser automation profiles and generated screenshots/logs
+**/_edge_profile*/
+**/_server*.log
+**/_*.png
+**/_*.jpg
+
+# Source handoff archive kept outside the cleaned project baseline
+_source_unpack_suliniang/
+
+# Keep cleaned/normalized assets in git; leave original generation exports out
+suliniang_project_materials/assets_3d_character/
+suliniang_project_materials/assets_3d_character_videos/original/
+suliniang_project_materials/assets_3d_character_videos/_frames/
+
+# Common OS/editor/cache noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+node_modules/
+dist/
+build/
+.cache/
+coverage/

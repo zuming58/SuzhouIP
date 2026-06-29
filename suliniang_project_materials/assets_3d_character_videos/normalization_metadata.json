@@ -1,0 +1,218 @@
+[
+  {
+    "file": "idle_loop.mp4",
+    "source_size": [
+      1080,
+      1920
+    ],
+    "bbox": [
+      162,
+      80,
+      670,
+      1788
+    ],
+    "bottom": 1867,
+    "scale": 0.9732,
+    "scaled_size": [
+      1052,
+      1868
+    ],
+    "overlay": [
+      56,
+      31
+    ],
+    "output_size": [
+      1080,
+      1920
+    ]
+  },
+  {
+    "file": "welcome_once.mp4",
+    "source_size": [
+      1080,
+      1920
+    ],
+    "bbox": [
+      4,
+      112,
+      1062,
+      1800
+    ],
+    "bottom": 1911,
+    "scale": 0.9667,
+    "scaled_size": [
+      1044,
+      1856
+    ],
+    "overlay": [
+      23,
+      1
+    ],
+    "output_size": [
+      1080,
+      1920
+    ]
+  },
+  {
+    "file": "listening_loop.mp4",
+    "source_size": [
+      1080,
+      1920
+    ],
+    "bbox": [
+      240,
+      208,
+      536,
+      1470
+    ],
+    "bottom": 1677,
+    "scale": 1.1837,
+    "scaled_size": [
+      1278,
+      2272
+    ],
+    "overlay": [
+      -61,
+      -137
+    ],
+    "output_size": [
+      1080,
+      1920
+    ]
+  },
+  {
+    "file": "thinking_loop.mp4",
+    "source_size": [
+      1080,
+      1920
+    ],
+    "bbox": [
+      174,
+      75,
+      656,
+      1773
+    ],
+    "bottom": 1847,
+    "scale": 0.9814,
+    "scaled_size": [
+      1060,
+      1884
+    ],
+    "overlay": [
+      47,
+      35
+    ],
+    "output_size": [
+      1080,
+      1920
+    ]
+  },
+  {
+    "file": "speaking_loop.mp4",
+    "source_size": [
+      1080,
+      1920
+    ],
+    "bbox": [
+      180,
+      98,
+      636,
+      1726
+    ],
+    "bottom": 1823,
+    "scale": 1.0081,
+    "scaled_size": [
+      1088,
+      1936
+    ],
+    "overlay": [
+      38,
+      10
+    ],
+    "output_size": [
+      1080,
+      1920
+    ]
+  },
+  {
+    "file": "guide_once.mp4",
+    "source_size": [
+      1080,
+      1920
+    ],
+    "bbox": [
+      232,
+      228,
+      552,
+      1532
+    ],
+    "bottom": 1759,
+    "scale": 1.1358,
+    "scaled_size": [
+      1226,
+      2180
+    ],
+    "overlay": [
+      -37,
+      -150
+    ],
+    "output_size": [
+      1080,
+      1920
+    ]
+  },
+  {
+    "file": "recital_once.mp4",
+    "source_size": [
+      1080,
+      1920
+    ],
+    "bbox": [
+      132,
+      103,
+      684,
+      1718
+    ],
+    "bottom": 1820,
+    "scale": 1.0128,
+    "scaled_size": [
+      1094,
+      1944
+    ],
+    "overlay": [
+      60,
+      5
+    ],
+    "output_size": [
+      1080,
+      1920
+    ]
+  },
+  {
+    "file": "smile_once.mp4",
+    "source_size": [
+      1080,
+      1920
+    ],
+    "bbox": [
+      186,
+      112,
+      638,
+      1752
+    ],
+    "bottom": 1863,
+    "scale": 0.9932,
+    "scaled_size": [
+      1072,
+      1906
+    ],
+    "overlay": [
+      38,
+      -2
+    ],
+    "output_size": [
+      1080,
+      1920
+    ]
+  }
+]

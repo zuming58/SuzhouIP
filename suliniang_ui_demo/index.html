@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>苏丽娘 AI 数字导游 UI Demo</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell" data-mode="desktop">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Suzhou AI Cultural Guide</p>
+          <h1>苏丽娘 AI 数字导游</h1>
+        </div>
+        <div class="mode-toggle" aria-label="显示模式">
+          <button class="mode-btn active" data-mode-target="desktop">桌面演示</button>
+          <button class="mode-btn" data-mode-target="mobile">手机预览</button>
+        </div>
+      </header>
+
+      <main class="stage">
+        <section class="phone-wrap" aria-label="手机端预览">
+          <div class="phone">
+            <div class="phone-glass">
+              <section class="screen active" data-screen="welcome">
+                <div class="welcome-brand">
+                  <p>苏州 AI Cultural Guide</p>
+                  <h2>苏丽娘 AI 数字导游</h2>
+                </div>
+                <div class="welcome-window" aria-hidden="true">
+                  <video class="welcome-video" muted playsinline autoplay src="../suliniang_project_materials/assets_3d_character_videos/normalized/welcome_once.mp4"></video>
+                </div>
+                <button class="skip-btn" data-go="home">跳过</button>
+                <div class="welcome-bottom">
+                  <p class="welcome-line">我是苏丽娘，你的苏苏，你的苏州。</p>
+                  <button class="primary wide" data-go="home">进入导游</button>
+                </div>
+              </section>
+
+              <section class="screen" data-screen="home">
+                <div class="screen-video-bg">
+                  <video id="avatar-video" muted playsinline loop autoplay src="../suliniang_project_materials/assets_3d_character_videos/normalized/idle_loop.mp4"></video>
+                </div>
+                <div class="home-top">
+                  <div>
+                    <p class="mini-label">当前城市</p>
+                    <h2>苏州</h2>
+                  </div>
+                  <button class="pill ghost" data-language>中文</button>
+                </div>
+                <div class="floating-status" id="status-label">等你提问</div>
+                <div class="home-panel">
+                  <p class="prompt-title">今天想怎么逛苏州？</p>
+                  <div class="quick-input" data-go="ask" data-quick-question>问我路线、美食、天气或景点故事</div>
+                  <div class="home-actions">
+                    <button data-go="ask">问苏丽娘</button>
+                    <button data-go="route">定制路线</button>
+                    <button data-go="nearby">附近推荐</button>
+                    <button data-go="trip">我的行程</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="screen" data-screen="ask">
+                <div class="screen-head">
+                  <button class="back" data-go="home">返回</button>
+                  <h2>问苏丽娘</h2>
+                  <button class="pill ghost" data-language>中文</button>
+                </div>
+                <div class="mini-avatar">
+                  <div class="mini-video-stack" aria-hidden="true">
+                    <video class="mini-video ask-layer active" id="ask-mini-a" muted playsinline autoplay poster="../suliniang_project_materials/assets_3d_character_normalized/pose_listening.png" src="../suliniang_project_materials/assets_3d_character_videos/normalized/listening_loop.mp4"></video>
+                    <video class="mini-video ask-layer" id="ask-mini-b" muted playsinline poster="../suliniang_project_materials/assets_3d_character_normalized/pose_listening.png"></video>
+                  </div>
+                  <div>
+                    <span class="state-dot"></span>
+                    <p id="ask-state">正在倾听</p>
+                  </div>
+                </div>
+                <div class="chat-stack" id="chat-stack">
+                  <div class="bubble user">苏州有什么好吃的？我今天想逛得轻松一点。</div>
+                  <div class="bubble guide">
+                    <strong>我给你挑一条轻松的苏州味道线。</strong>
+                    <div class="food-grid">
+                      <span>苏式汤面</span>
+                      <span>桂花糖粥</span>
+                      <span>生煎</span>
+                      <span>松鼠桂鱼</span>
+                    </div>
+                    <div class="inline-actions">
+                      <button data-go="route">加入路线</button>
+                      <button data-go="nearby">附近看看</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="composer">
+                  <input id="question-input" value="帮我安排半天苏州路线" aria-label="输入问题" />
+                  <button class="voice-btn" type="button" aria-label="语音输入">麦</button>
+                  <button data-ask-submit>发送</button>
+                </div>
+              </section>
+
+              <section class="screen" data-screen="route">
+                <div class="screen-head">
+                  <button class="back" data-go="home">返回</button>
+                  <h2>定制路线</h2>
+                  <button class="pill ghost">一日</button>
+                </div>
+                <div class="mini-avatar route-avatar">
+                  <video class="mini-video" muted playsinline loop autoplay poster="../suliniang_project_materials/assets_3d_character_normalized/pose_thinking.png" src="../suliniang_project_materials/assets_3d_character_videos/normalized/thinking_loop.mp4"></video>
+                  <div>
+                    <span class="state-dot"></span>
+                    <p>正在为你排路线</p>
+                  </div>
+                </div>
+                <div class="preference-card">
+                  <p class="section-kicker">偏好</p>
+                  <div class="chips" id="route-preferences">
+                    <button class="selected" data-preference="半天">半天</button>
+                    <button data-preference="一天">一天</button>
+                    <button class="selected" data-preference="园林">园林</button>
+                    <button class="selected" data-preference="美食">美食</button>
+                    <button data-preference="亲子">亲子</button>
+                    <button class="selected" data-preference="少走路">少走路</button>
+                  </div>
+                  <div class="note-box" id="route-note">带老人，想轻松一点，中午想吃苏州小吃。</div>
+                  <button class="primary wide" data-generate-route>生成路线</button>
+                </div>
+                <div class="route-result visible" id="route-result">
+                  <p class="route-title">园林与古城轻松线</p>
+                  <article class="route-node">
+                    <time>09:30</time>
+                    <div>
+                      <h3>拙政园</h3>
+                      <p>苏州园林代表，内置精讲样板。</p>
+                      <button data-go="guide">开始导览</button>
+                    </div>
+                  </article>
+                  <article class="route-node">
+                    <time>12:00</time>
+                    <div>
+                      <h3>平江路</h3>
+                      <p>小吃、咖啡、老街散步。</p>
+                      <button data-go="nearby">查看推荐</button>
+                    </div>
+                  </article>
+                  <article class="route-node">
+                    <time>15:00</time>
+                    <div>
+                      <h3>虎丘</h3>
+                      <p>历史遗迹，作为可扩展示例。</p>
+                      <button data-demo-speaking>查看介绍</button>
+                    </div>
+                  </article>
+                </div>
+              </section>
+
+              <section class="screen" data-screen="guide">
+                <div class="screen-head">
+                  <button class="back" data-go="route">返回</button>
+                  <h2>拙政园导览</h2>
+                  <button class="pill ghost">样板</button>
+                </div>
+                <div class="guide-hero">
+                  <video class="mini-video guide-video" muted playsinline loop autoplay poster="../suliniang_project_materials/assets_3d_character_normalized/pose_point_to_scene.png" src="../suliniang_project_materials/assets_3d_character_videos/normalized/guide_once.mp4"></video>
+                  <div>
+                    <p class="section-kicker">当前景区</p>
+                    <h3>拙政园</h3>
+                    <p>从路线节点进入景区讲解模式。</p>
+                  </div>
+                </div>
+                <div class="map-card">
+                  <img src="../suliniang_project_materials/assets_reference/demo_zhuozhengyuan_map.png" alt="拙政园导览图" />
+                </div>
+                <div class="spot-list" id="spot-list">
+                  <button data-spot="yuanxiang" data-x="48%" data-y="46%">远香堂</button>
+                  <button data-spot="yushui" data-x="56%" data-y="44%" class="selected">与谁同坐轩</button>
+                  <button data-spot="xiaofeihong" data-x="62%" data-y="58%">小飞虹</button>
+                  <button data-spot="xiangzhou" data-x="70%" data-y="50%">香洲</button>
+                  <button data-spot="daishuang" data-x="36%" data-y="64%">待霜亭</button>
+                </div>
+                <div class="spot-cta">
+                  <div>
+                    <p class="section-kicker">当前点位</p>
+                    <strong id="selected-spot">与谁同坐轩</strong>
+                    <p id="selected-spot-summary">扇形小轩，是最适合苏丽娘诗意讲解的点位。</p>
+                  </div>
+                  <button class="primary" data-go="spot">开始讲解</button>
+                </div>
+              </section>
+
+              <section class="screen" data-screen="spot">
+                <div class="screen-head">
+                  <button class="back" data-go="guide">返回</button>
+                  <h2 data-spot-title>与谁同坐轩</h2>
+                  <button class="pill ghost">中</button>
+                </div>
+                <div class="mini-avatar">
+                  <video class="mini-video" muted playsinline loop autoplay poster="../suliniang_project_materials/assets_3d_character_normalized/expression_mouth_open.png" src="../suliniang_project_materials/assets_3d_character_videos/normalized/speaking_loop.mp4"></video>
+                  <div>
+                    <span class="state-dot"></span>
+                    <p>正在讲解</p>
+                  </div>
+                </div>
+                <div class="story-card">
+                  <p id="spot-story">这座扇形小轩，名字出自苏东坡的词：“与谁同坐？明月、清风、我。”窗、梁、石凳都呼应扇面，像把清风明月收进园中。</p>
+                </div>
+                <div class="tone-actions">
+                  <button data-demo-speaking>给孩子讲</button>
+                  <button data-demo-recital>诗意一点</button>
+                  <button>英文讲解</button>
+                  <button data-go="nearby">附近下一站</button>
+                </div>
+                <button class="primary wide" data-demo-guide>播放讲解</button>
+              </section>
+
+              <section class="screen" data-screen="nearby">
+                <div class="screen-head">
+                  <button class="back" data-go="home">返回</button>
+                  <h2>附近推荐</h2>
+                  <button class="pill ghost">苏州味</button>
+                </div>
+                <div class="nearby-card feature" id="nearby-feature">
+                  <p class="section-kicker">午餐建议</p>
+                  <h3>平江路小吃慢逛</h3>
+                  <p>适合从拙政园出来后步行或短途打车过去。</p>
+                </div>
+                <div class="nearby-list" id="nearby-list">
+                  <article>
+                    <span>苏式汤面</span>
+                    <p>清汤细面，适合轻松午餐。</p>
+                  </article>
+                  <article>
+                    <span>桂花糖粥</span>
+                    <p>甜口小食，适合边逛边吃。</p>
+                  </article>
+                  <article>
+                    <span>评弹茶馆</span>
+                    <p>可作为昆曲、江南文化延展体验。</p>
+                  </article>
+                </div>
+              </section>
+
+              <section class="screen" data-screen="trip">
+                <div class="screen-head">
+                  <button class="back" data-go="home">返回</button>
+                  <h2>我的行程</h2>
+                  <button class="pill ghost">今天</button>
+                </div>
+                <div class="trip-timeline" id="trip-timeline">
+                  <article>
+                    <time>09:30</time>
+                    <h3>拙政园导览</h3>
+                    <p>已加入精讲样板。</p>
+                  </article>
+                  <article>
+                    <time>12:00</time>
+                    <h3>平江路小吃</h3>
+                    <p>推荐苏式汤面和桂花糖粥。</p>
+                  </article>
+                  <article class="muted">
+                    <time>15:00</time>
+                    <h3>虎丘</h3>
+                    <p>可扩展景区导览。</p>
+                  </article>
+                </div>
+                <button class="primary wide" data-go="route">重新调整路线</button>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <aside class="demo-panel" aria-label="演示控制台">
+          <div class="panel-card hero-card">
+            <p class="eyebrow">Prototype Controls</p>
+            <h2>演示控制台</h2>
+            <p>比赛现场可以快速切换页面、触发数字人状态、展示“问答-路线-导览-服务”的完整闭环。</p>
+          </div>
+          <div class="panel-card">
+            <p class="panel-title">页面</p>
+            <div class="control-grid">
+              <button data-go="welcome">欢迎</button>
+              <button data-go="home">主页</button>
+              <button data-go="ask">问答</button>
+              <button data-go="route">路线</button>
+              <button data-go="guide">导览</button>
+              <button data-go="nearby">附近</button>
+            </div>
+          </div>
+          <div class="panel-card">
+            <p class="panel-title">数字人状态</p>
+            <div class="control-grid">
+              <button data-video="idle_loop.mp4" data-state="等你提问">idle</button>
+              <button data-video="listening_loop.mp4" data-state="正在倾听">listen</button>
+              <button data-video="thinking_loop.mp4" data-state="正在思考">think</button>
+              <button data-video="speaking_loop.mp4" data-state="正在讲解">speak</button>
+              <button data-video="guide_once.mp4" data-state="引导景点">guide</button>
+              <button data-video="smile_once.mp4" data-state="讲解完成">smile</button>
+            </div>
+          </div>
+          <div class="panel-card script-card">
+            <p class="panel-title">推荐演示脚本</p>
+            <ol>
+              <li>播放欢迎，进入主界面。</li>
+              <li>问“苏州有什么好吃的”。</li>
+              <li>生成一日轻松路线。</li>
+              <li>从拙政园节点进入导览。</li>
+              <li>演示点位讲解与诗意讲法。</li>
+            </ol>
+          </div>
+        </aside>
+      </main>
+    </div>
+    <script src="./data/app-content.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
