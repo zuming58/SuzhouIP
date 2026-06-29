@@ -18,18 +18,29 @@ const nearbyFeature = document.querySelector("#nearby-feature");
 const nearbyList = document.querySelector("#nearby-list");
 const tripTimeline = document.querySelector("#trip-timeline");
 const quickQuestion = document.querySelector("[data-quick-question]");
+const voiceState = document.querySelector("#voice-state");
+const voiceUserText = document.querySelector("#voice-user-text");
+const voiceAiText = document.querySelector("#voice-ai-text");
+const voiceBridgeMode = document.querySelector("#voice-bridge-mode");
+const voiceOrb = document.querySelector("#voice-orb");
 
 const content = window.SULINIANG_CONTENT;
 const videoBase = "../suliniang_project_materials/assets_3d_character_videos/normalized/";
+const voiceBridgeUrl = window.SULINIANG_VOICE_BRIDGE_URL || "ws://127.0.0.1:8787/voice";
 let askAmbientTimer = null;
 let askActiveLayer = 0;
 let currentSpotId = content.defaultSpotId;
 let activeRoute = content.routes[0];
 let tripItems = activeRoute.nodes.map((node) => ({ ...node, source: "route" }));
+let voiceSocket = null;
+let voiceConnected = false;
+let voiceAudioContext = null;
+let voicePlaybackTime = 0;
 
 const screenVideoMap = {
   welcome: "welcome_once.mp4",
   home: "idle_loop.mp4",
+  voice: "listening_loop.mp4",
   ask: "listening_loop.mp4",
   route: "thinking_loop.mp4",
   guide: "guide_once.mp4",
@@ -326,6 +337,134 @@ function initQuickQuestion() {
   if (questionInput) questionInput.value = content.quickQuestions[0];
 }
 
+function setVoiceUi(state, text) {
+  if (voiceState) voiceState.textContent = text;
+  if (voiceOrb) voiceOrb.dataset.state = state;
+  if (state === "listening") setAvatar("listening_loop.mp4", "实时倾听");
+  if (state === "thinking") setAvatar("thinking_loop.mp4", "正在思考");
+  if (state === "speaking") setAvatar("speaking_loop.mp4", "正在回应");
+  if (state === "idle") setAvatar("idle_loop.mp4", "等你提问");
+}
+
+function connectVoiceBridge() {
+  if (voiceSocket && voiceSocket.readyState <= WebSocket.OPEN) return;
+
+  setVoiceUi("thinking", "正在连接本地语音桥接层");
+  voiceSocket = new WebSocket(voiceBridgeUrl);
+  voiceSocket.binaryType = "arraybuffer";
+
+  voiceSocket.addEventListener("open", () => {
+    voiceConnected = true;
+    voiceSocket.send(
+      JSON.stringify({
+        type: "session.start",
+        inputMod: "text",
+        model: "2.2.0.0",
+        characterManifest:
+          "你是苏丽娘，苏州AI数字导游。你温柔、灵动、有昆曲和江南园林气质。回答要短句、口语化、适合边走边听。用户问路线、景点、附近服务时，先自然回应，再给出清楚建议。",
+      }),
+    );
+  });
+
+  voiceSocket.addEventListener("message", (event) => {
+    if (typeof event.data !== "string") {
+      playPcmS16Le(event.data);
+      return;
+    }
+    handleVoiceEvent(JSON.parse(event.data));
+  });
+
+  voiceSocket.addEventListener("close", () => {
+    voiceConnected = false;
+    setVoiceUi("idle", "语音桥接层已断开");
+  });
+
+  voiceSocket.addEventListener("error", () => {
+    voiceConnected = false;
+    setVoiceUi("idle", "无法连接语音桥接层，请先启动 voice_bridge");
+  });
+}
+
+function handleVoiceEvent(event) {
+  if (event.type === "bridge.ready" && voiceBridgeMode) {
+    voiceBridgeMode.textContent = event.mock ? "Mock" : "Volc";
+  }
+  if (event.type === "session.started") {
+    setVoiceUi("listening", "语音会话已就绪，可以开始提问");
+  }
+  if (event.type === "asr.final") {
+    if (voiceUserText) voiceUserText.textContent = event.text || "已收到语音问题";
+    if (questionInput && event.text) questionInput.value = event.text;
+    applyVoiceToolIntent(event.text || "");
+    setVoiceUi("thinking", "苏丽娘正在思考");
+  }
+  if (event.type === "chat.partial") {
+    if (voiceAiText) voiceAiText.textContent = event.fullText || event.text || "";
+  }
+  if (event.type === "tts.start") {
+    setVoiceUi("speaking", "苏丽娘正在回应");
+  }
+  if (event.type === "tts.end" || event.type === "chat.ended") {
+    setVoiceUi("listening", "可以继续追问");
+  }
+  if (event.type === "error") {
+    setVoiceUi("idle", event.message || "语音链路出现错误");
+  }
+}
+
+function sendVoiceText(text) {
+  const query = (text || questionInput?.value || content.quickQuestions[0]).trim();
+  if (!query) return;
+  if (voiceUserText) voiceUserText.textContent = query;
+  if (voiceAiText) voiceAiText.textContent = "苏丽娘正在组织回答...";
+  applyVoiceToolIntent(query);
+  connectVoiceBridge();
+  const send = () => voiceSocket?.send(JSON.stringify({ type: "text.query", content: query }));
+  if (voiceConnected) {
+    send();
+  } else {
+    voiceSocket?.addEventListener("open", () => setTimeout(send, 260), { once: true });
+  }
+}
+
+function endVoiceSession() {
+  voiceSocket?.send(JSON.stringify({ type: "session.end" }));
+  voiceSocket?.close();
+  voiceConnected = false;
+  setVoiceUi("idle", "语音会话已结束");
+}
+
+function applyVoiceToolIntent(text) {
+  if (/路线|半天|一天|安排|老人|少走路/.test(text)) {
+    generateRoute();
+  }
+  if (/拙政园|导览|讲解|与谁同坐轩|小飞虹|远香堂/.test(text)) {
+    const matched = content.spots.find((spot) => text.includes(spot.name));
+    selectSpot(matched?.id || currentSpotId);
+  }
+  if (/附近|美食|小吃|午餐|汤面|平江路/.test(text)) {
+    renderNearby();
+  }
+}
+
+function playPcmS16Le(arrayBuffer) {
+  const samples = new Int16Array(arrayBuffer);
+  if (!samples.length) return;
+  voiceAudioContext ||= new AudioContext({ sampleRate: 24000 });
+  const audioBuffer = voiceAudioContext.createBuffer(1, samples.length, 24000);
+  const channel = audioBuffer.getChannelData(0);
+  for (let index = 0; index < samples.length; index += 1) {
+    channel[index] = samples[index] / 32768;
+  }
+
+  const source = voiceAudioContext.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(voiceAudioContext.destination);
+  const startAt = Math.max(voiceAudioContext.currentTime, voicePlaybackTime);
+  source.start(startAt);
+  voicePlaybackTime = startAt + audioBuffer.duration;
+}
+
 document.addEventListener("click", (event) => {
   const spotButton = event.target.closest("[data-spot]");
   if (spotButton) {
@@ -339,6 +478,28 @@ document.addEventListener("click", (event) => {
 
   if (event.target.closest("[data-generate-route]")) {
     generateRoute();
+  }
+
+  if (event.target.closest(".voice-btn")) {
+    showScreen("voice");
+    connectVoiceBridge();
+  }
+
+  if (event.target.closest("[data-voice-start]")) {
+    connectVoiceBridge();
+  }
+
+  if (event.target.closest("[data-voice-text]")) {
+    sendVoiceText();
+  }
+
+  const voicePreset = event.target.closest("[data-voice-preset]");
+  if (voicePreset) {
+    sendVoiceText(voicePreset.dataset.voicePreset);
+  }
+
+  if (event.target.closest("[data-voice-end]")) {
+    endVoiceSession();
   }
 
   const addNearby = event.target.closest("[data-add-nearby]");
