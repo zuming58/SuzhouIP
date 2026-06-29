@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
+    "test:text": "node scripts/test-text.js",
     "check": "node --check server.js && node --check src/doubao-realtime-codec.js && node --check src/doubao-realtime-client.js"
   },
   "dependencies": {

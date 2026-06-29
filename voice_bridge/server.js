@@ -1,14 +1,21 @@
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
 import http from "node:http";
 import WebSocket, { WebSocketServer } from "ws";
 import { DoubaoRealtimeClient } from "./src/doubao-realtime-client.js";
 
+loadEnv({ override: true });
+
 const PORT = Number(process.env.PORT || 8787);
-const MOCK_MODE = process.env.MOCK_MODE !== "0" || !process.env.VOLC_APP_ID || !process.env.VOLC_ACCESS_KEY;
+const MOCK_MODE = process.env.MOCK_MODE !== "0" || !process.env.VOLC_ACCESS_KEY;
 
 const server = http.createServer((req, res) => {
   if (req.url === "/health") {
-    sendJson(res, 200, { ok: true, mock: MOCK_MODE });
+    sendJson(res, 200, {
+      ok: true,
+      mock: MOCK_MODE,
+      volcReady: Boolean(process.env.VOLC_ACCESS_KEY),
+      model: process.env.VOLC_MODEL || "1.2.1.1",
+    });
     return;
   }
   sendJson(res, 404, { error: "not_found" });
@@ -40,6 +47,12 @@ wss.on("connection", async (socket) => {
         mockClosed = false;
         send({ type: "session.started", dialogId: "mock-dialog" });
         send({ type: "state.changed", state: "listening" });
+        return;
+      }
+
+      const configError = validateVolcConfig();
+      if (configError) {
+        send({ type: "error", message: configError });
         return;
       }
 
@@ -103,6 +116,14 @@ function loadConfig(message) {
     speaker: message.speaker || process.env.VOLC_SPEAKER,
     url: process.env.VOLC_REALTIME_URL,
   };
+}
+
+function validateVolcConfig() {
+  if (!process.env.VOLC_ACCESS_KEY) return "缺少 VOLC_ACCESS_KEY，请在 voice_bridge/.env 填入火山 Access Token / API Key。";
+  if (/^api-key/i.test(process.env.VOLC_APP_ID)) {
+    return "VOLC_APP_ID 看起来像 API Key 名称，不是 App ID。请到火山控制台复制应用 APP ID。";
+  }
+  return "";
 }
 
 function mockReply(send, query, isClosed) {
