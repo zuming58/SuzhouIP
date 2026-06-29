@@ -111,7 +111,7 @@ function loadConfig(message) {
     characterManifest: message.characterManifest,
     dialogId: message.dialogId,
     inputMod: message.inputMod || process.env.VOLC_INPUT_MOD || "text",
-    model: message.model || process.env.VOLC_MODEL || "2.2.0.0",
+    model: message.model || process.env.VOLC_MODEL || "1.2.1.1",
     resourceId: process.env.VOLC_RESOURCE_ID,
     speaker: message.speaker || process.env.VOLC_SPEAKER,
     url: process.env.VOLC_REALTIME_URL,
