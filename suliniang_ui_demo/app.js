@@ -23,6 +23,7 @@ const voiceUserText = document.querySelector("#voice-user-text");
 const voiceAiText = document.querySelector("#voice-ai-text");
 const voiceBridgeMode = document.querySelector("#voice-bridge-mode");
 const voiceOrb = document.querySelector("#voice-orb");
+const voiceTalkButton = document.querySelector("[data-voice-talk]");
 
 const content = window.SULINIANG_CONTENT;
 const videoBase = "../suliniang_project_materials/assets_3d_character_videos/normalized/";
@@ -32,10 +33,12 @@ let askActiveLayer = 0;
 let currentSpotId = content.defaultSpotId;
 let activeRoute = content.routes[0];
 let tripItems = activeRoute.nodes.map((node) => ({ ...node, source: "route" }));
+let activeNearbyItems = content.nearby[0]?.items || [];
 let voiceSocket = null;
 let voiceConnected = false;
 let voiceAudioContext = null;
 let voicePlaybackTime = 0;
+let voicePressing = false;
 
 const screenVideoMap = {
   welcome: "welcome_once.mp4",
@@ -295,6 +298,7 @@ function addToTrip(item) {
 function renderNearby() {
   const group = content.nearby[0];
   if (!group) return;
+  activeNearbyItems = group.items;
   if (nearbyFeature) {
     nearbyFeature.innerHTML = `
       <p class="section-kicker">${escapeHtml(group.category)}</p>
@@ -340,6 +344,9 @@ function initQuickQuestion() {
 function setVoiceUi(state, text) {
   if (voiceState) voiceState.textContent = text;
   if (voiceOrb) voiceOrb.dataset.state = state;
+  if (voiceTalkButton) {
+    voiceTalkButton.classList.toggle("is-recording", state === "listening" && voicePressing);
+  }
   if (state === "listening") setAvatar("listening_loop.mp4", "实时倾听");
   if (state === "thinking") setAvatar("thinking_loop.mp4", "正在思考");
   if (state === "speaking") setAvatar("speaking_loop.mp4", "正在回应");
@@ -389,14 +396,22 @@ function handleVoiceEvent(event) {
   if (event.type === "bridge.ready" && voiceBridgeMode) {
     voiceBridgeMode.textContent = event.mock ? "Mock" : "Volc";
   }
+  if (event.type === "state.changed") {
+    setVoiceUi(event.state || "idle", event.label || "语音状态已更新");
+  }
   if (event.type === "session.started") {
     setVoiceUi("listening", "语音会话已就绪，可以开始提问");
   }
   if (event.type === "asr.final") {
     if (voiceUserText) voiceUserText.textContent = event.text || "已收到语音问题";
     if (questionInput && event.text) questionInput.value = event.text;
-    applyVoiceToolIntent(event.text || "");
     setVoiceUi("thinking", "苏丽娘正在思考");
+  }
+  if (event.type === "business.intent") {
+    applyVoiceIntent(event.intent, event.params || {});
+  }
+  if (event.type === "tool.result") {
+    applyVoiceToolResult(event.tool, event.result);
   }
   if (event.type === "chat.partial") {
     if (voiceAiText) voiceAiText.textContent = event.fullText || event.text || "";
@@ -417,7 +432,6 @@ function sendVoiceText(text) {
   if (!query) return;
   if (voiceUserText) voiceUserText.textContent = query;
   if (voiceAiText) voiceAiText.textContent = "苏丽娘正在组织回答...";
-  applyVoiceToolIntent(query);
   connectVoiceBridge();
   const send = () => voiceSocket?.send(JSON.stringify({ type: "text.query", content: query }));
   if (voiceConnected) {
@@ -434,16 +448,79 @@ function endVoiceSession() {
   setVoiceUi("idle", "语音会话已结束");
 }
 
-function applyVoiceToolIntent(text) {
-  if (/路线|半天|一天|安排|老人|少走路/.test(text)) {
-    generateRoute();
+function startVoicePress() {
+  voicePressing = true;
+  connectVoiceBridge();
+  if (voiceUserText) voiceUserText.textContent = "正在听你说话...";
+  if (voiceAiText) voiceAiText.textContent = "松开后，苏丽娘会整理你的问题。";
+  setVoiceUi("listening", "正在听，松开后发送");
+}
+
+function finishVoicePress() {
+  if (!voicePressing) return;
+  voicePressing = false;
+  if (voiceTalkButton) voiceTalkButton.classList.remove("is-recording");
+  setVoiceUi("thinking", "苏丽娘正在理解你的问题");
+  sendVoiceText();
+}
+
+function applyVoiceIntent(intent, params) {
+  const labelMap = {
+    generate_route: "正在查询适合你的苏州路线",
+    spot_explain: "正在整理景点讲解",
+    nearby_recommend: "正在查找附近推荐",
+    smalltalk: "苏丽娘正在回应",
+  };
+  setVoiceUi("thinking", labelMap[intent] || "苏丽娘正在理解你的需求");
+
+  if (intent === "spot_explain" && params.spot) {
+    const matched = content.spots.find((spot) => spot.name === params.spot);
+    if (matched) selectSpot(matched.id);
   }
-  if (/拙政园|导览|讲解|与谁同坐轩|小飞虹|远香堂/.test(text)) {
-    const matched = content.spots.find((spot) => text.includes(spot.name));
-    selectSpot(matched?.id || currentSpotId);
+}
+
+function applyVoiceToolResult(tool, result) {
+  if (!result) return;
+
+  if (tool === "generate_route") {
+    activeRoute = result;
+    tripItems = result.nodes.map((node) => ({ ...node, source: "route" }));
+    renderRoute(result);
+    renderTrip();
   }
-  if (/附近|美食|小吃|午餐|汤面|平江路/.test(text)) {
-    renderNearby();
+
+  if (tool === "spot_explain") {
+    const matched = content.spots.find((spot) => spot.name === result.spot);
+    if (matched) selectSpot(matched.id);
+    if (spotStory && result.text) spotStory.textContent = result.text;
+  }
+
+  if (tool === "nearby_recommend") {
+    renderNearbyResult(result);
+  }
+}
+
+function renderNearbyResult(result) {
+  activeNearbyItems = result.items || [];
+  if (nearbyFeature) {
+    nearbyFeature.innerHTML = `
+      <p class="section-kicker">附近推荐</p>
+      <h3>${escapeHtml(result.title || "苏州附近推荐")}</h3>
+      <p>${escapeHtml(result.location ? `建议前往${result.location}，适合接在当前行程后。` : "根据当前位置推荐。")}</p>
+    `;
+  }
+  if (nearbyList) {
+    nearbyList.innerHTML = (result.items || [])
+      .map(
+        (item, index) => `
+          <article>
+            <span>${escapeHtml(item.title)}</span>
+            <p>${escapeHtml(item.description)}</p>
+            <button data-add-nearby="${index}">加入行程</button>
+          </article>
+        `,
+      )
+      .join("");
   }
 }
 
@@ -485,28 +562,16 @@ document.addEventListener("click", (event) => {
     connectVoiceBridge();
   }
 
-  if (event.target.closest("[data-voice-start]")) {
-    connectVoiceBridge();
-  }
-
-  if (event.target.closest("[data-voice-text]")) {
-    sendVoiceText();
-  }
-
-  const voicePreset = event.target.closest("[data-voice-preset]");
-  if (voicePreset) {
-    sendVoiceText(voicePreset.dataset.voicePreset);
-  }
-
-  if (event.target.closest("[data-voice-end]")) {
-    endVoiceSession();
+  const voiceDemo = event.target.closest("[data-voice-demo]");
+  if (voiceDemo) {
+    showScreen("voice");
+    sendVoiceText(voiceDemo.dataset.voiceDemo);
   }
 
   const addNearby = event.target.closest("[data-add-nearby]");
   if (addNearby) {
-    const group = content.nearby[0];
-    const item = group.items[Number(addNearby.dataset.addNearby)];
-    addToTrip(item);
+    const item = activeNearbyItems[Number(addNearby.dataset.addNearby)];
+    if (item) addToTrip(item);
   }
 
   const answerAction = event.target.closest("[data-answer-action]");
@@ -566,6 +631,22 @@ document.addEventListener("keydown", (event) => {
     answerQuestion(questionInput.value);
   }
 });
+
+if (voiceTalkButton) {
+  voiceTalkButton.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    voiceTalkButton.setPointerCapture(event.pointerId);
+    startVoicePress();
+  });
+  voiceTalkButton.addEventListener("pointerup", (event) => {
+    event.preventDefault();
+    finishVoicePress();
+  });
+  voiceTalkButton.addEventListener("pointercancel", () => {
+    voicePressing = false;
+    setVoiceUi("idle", "已取消本轮语音");
+  });
+}
 
 document.querySelectorAll("video").forEach((video) => {
   video.addEventListener("ended", () => {

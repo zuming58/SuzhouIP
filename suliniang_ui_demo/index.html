@@ -67,29 +67,24 @@
                 <div class="screen-head">
                   <button class="back" data-go="home">返回</button>
                   <h2>实时语音</h2>
-                  <button class="pill ghost" id="voice-bridge-mode">Bridge</button>
+                  <button class="pill ghost" id="voice-bridge-mode">待连接</button>
                 </div>
-                <div class="voice-stage">
-                  <div class="voice-orb" id="voice-orb">
-                    <video class="mini-video" muted playsinline loop autoplay poster="../suliniang_project_materials/assets_3d_character_normalized/pose_listening.png" src="../suliniang_project_materials/assets_3d_character_videos/normalized/listening_loop.mp4"></video>
+                <div class="voice-call">
+                  <div class="voice-orb" id="voice-orb" data-state="idle">
+                    <video class="voice-video" muted playsinline loop autoplay poster="../suliniang_project_materials/assets_3d_character_normalized/pose_listening.png" src="../suliniang_project_materials/assets_3d_character_videos/normalized/listening_loop.mp4"></video>
                   </div>
-                  <p class="voice-state" id="voice-state">连接本地语音桥接层后开始对话</p>
-                  <p class="voice-hint">密钥在后端 .env，前端只连接本地 WebSocket。</p>
-                </div>
-                <div class="voice-transcript">
-                  <p class="section-kicker">当前轮</p>
-                  <strong id="voice-user-text">请开始语音对话</strong>
-                  <p id="voice-ai-text">苏丽娘会在这里显示实时回复。</p>
-                </div>
-                <div class="voice-actions">
-                  <button class="primary" data-voice-start>开始语音对话</button>
-                  <button data-voice-text>用当前问题试讲</button>
-                  <button data-voice-end>结束</button>
-                </div>
-                <div class="voice-presets">
-                  <button data-voice-preset="帮我安排半天苏州路线">半天路线</button>
-                  <button data-voice-preset="拙政园与谁同坐轩怎么讲？">点位讲解</button>
-                  <button data-voice-preset="附近有什么苏州小吃？">附近美食</button>
+                  <p class="voice-state" id="voice-state">待机，点击开始后和苏丽娘对话</p>
+                  <div class="voice-transcript">
+                    <p class="section-kicker">我听到</p>
+                    <strong id="voice-user-text">请开始语音对话</strong>
+                    <p class="section-kicker">苏丽娘</p>
+                    <p id="voice-ai-text">我会根据你的问题推荐路线、讲解景点或查找附近美食。</p>
+                  </div>
+                  <div class="voice-actions">
+                    <button class="voice-talk-btn" type="button" data-voice-talk aria-label="按住说话">
+                      <span class="voice-talk-icon"></span>
+                    </button>
+                  </div>
                 </div>
               </section>
 
@@ -329,6 +324,14 @@
               <button data-video="speaking_loop.mp4" data-state="正在讲解">speak</button>
               <button data-video="guide_once.mp4" data-state="引导景点">guide</button>
               <button data-video="smile_once.mp4" data-state="讲解完成">smile</button>
+            </div>
+          </div>
+          <div class="panel-card">
+            <p class="panel-title">语音测试</p>
+            <div class="control-grid">
+              <button data-voice-demo="帮我安排半天苏州路线">半天路线</button>
+              <button data-voice-demo="讲讲与谁同坐轩">点位讲解</button>
+              <button data-voice-demo="附近有什么苏州小吃">附近美食</button>
             </div>
           </div>
           <div class="panel-card script-card">

@@ -106,16 +106,27 @@ function loadConfig(message) {
 }
 
 function mockReply(send, query, isClosed) {
-  const routeIntent = /路线|半天|一天|安排|老人|少走路/.test(query);
-  const spotIntent = /拙政园|讲解|与谁同坐轩|景点|园林/.test(query);
-  const text = routeIntent
-    ? "好呀，我先帮你安排一条轻松路线。上午拙政园慢慢看，中午去平江路吃苏式汤面，下午可选虎丘或评弹茶馆。"
-    : spotIntent
-      ? "我们先看拙政园。与谁同坐轩最适合讲苏东坡的清风明月，我会用短句慢慢讲，你边走边听就好。"
-      : "可以呀。我是苏丽娘，你可以问我路线、园林故事、附近美食，或者让我把讲解说得更诗意一点。";
+  const intent = classifyMockIntent(query);
+  const toolResult = buildMockToolResult(intent);
+  const text = buildMockReply(intent, toolResult);
 
   const chunks = text.match(/.{1,18}/g) || [text];
+  send({ type: "state.changed", state: "listening", label: "正在听" });
   send({ type: "asr.final", text: query });
+  send({
+    type: "business.intent",
+    intent: intent.name,
+    confidence: intent.confidence,
+    params: intent.params,
+  });
+  if (toolResult) {
+    send({
+      type: "tool.result",
+      tool: intent.name,
+      result: toolResult,
+    });
+  }
+  send({ type: "state.changed", state: "speaking", label: "苏丽娘正在讲" });
   send({ type: "chat.partial", text: "", fullText: "" });
   chunks.forEach((chunk, index) => {
     setTimeout(() => {
@@ -125,9 +136,130 @@ function mockReply(send, query, isClosed) {
       if (index === chunks.length - 1) {
         send({ type: "chat.ended", text });
         send({ type: "tts.end" });
+        send({ type: "state.changed", state: "listening", label: "可以继续追问" });
       }
     }, 260 * (index + 1));
   });
+}
+
+function classifyMockIntent(query) {
+  if (/附近|周边|美食|小吃|餐厅|汤面|吃/.test(query)) {
+    return {
+      name: "nearby_recommend",
+      confidence: 0.91,
+      params: {
+        city: "苏州",
+        currentLocation: "拙政园",
+        type: "food",
+      },
+    };
+  }
+
+  if (/讲讲|介绍|讲解|拙政园|与谁同坐轩|小飞虹|远香堂|景点/.test(query)) {
+    return {
+      name: "spot_explain",
+      confidence: 0.9,
+      params: {
+        city: "苏州",
+        scenicArea: "拙政园",
+        spot: query.includes("小飞虹") ? "小飞虹" : query.includes("远香堂") ? "远香堂" : "与谁同坐轩",
+      },
+    };
+  }
+
+  if (/路线|半天|一天|安排|老人|少走路|行程/.test(query)) {
+    return {
+      name: "generate_route",
+      confidence: 0.93,
+      params: {
+        city: "苏州",
+        duration: query.includes("一天") ? "one_day" : "half_day",
+        prefs: ["园林", "美食", "少走路"],
+      },
+    };
+  }
+
+  return {
+    name: "smalltalk",
+    confidence: 0.72,
+    params: {
+      city: "苏州",
+    },
+  };
+}
+
+function buildMockToolResult(intent) {
+  if (intent.name === "generate_route") {
+    return {
+      id: "voice-half-day-route",
+      title: "半天苏州轻松路线",
+      summary: "适合想少走路、看园林、顺路吃苏州小吃的游客。",
+      preferences: ["半天", "园林", "美食", "少走路"],
+      note: "从拙政园开始，中午接平江路美食，节奏轻松。",
+      nodes: [
+        {
+          time: "09:30",
+          title: "拙政园",
+          description: "先看远香堂，再到与谁同坐轩听诗意讲解。",
+          action: { label: "开始导览", screen: "guide" },
+        },
+        {
+          time: "12:00",
+          title: "平江路",
+          description: "推荐苏式汤面、桂花糖粥，适合慢慢逛。",
+          action: { label: "查看推荐", screen: "nearby" },
+        },
+        {
+          time: "14:00",
+          title: "评弹茶馆",
+          description: "坐下来听一段江南声音，作为轻松收尾。",
+          action: { label: "加入行程", screen: "trip" },
+        },
+      ],
+    };
+  }
+
+  if (intent.name === "spot_explain") {
+    return {
+      spot: intent.params.spot,
+      text:
+        intent.params.spot === "小飞虹"
+          ? "小飞虹像一笔轻轻架在水面上的桥，走过它时，水、廊、亭会一层层换景。"
+          : intent.params.spot === "远香堂"
+            ? "远香堂取“香远益清”之意，是拙政园中部看水面与荷风的核心点。"
+            : "与谁同坐轩出自苏东坡的词，“与谁同坐？明月、清风、我。”它把诗意藏进扇形空间里。",
+    };
+  }
+
+  if (intent.name === "nearby_recommend") {
+    return {
+      title: "拙政园附近苏州小吃",
+      location: "平江路",
+      items: [
+        { title: "苏式汤面", description: "清汤细面，适合作为轻松午餐。", time: "12:10" },
+        { title: "桂花糖粥", description: "甜口小食，边走边吃很有苏州味。", time: "12:45" },
+        { title: "评弹茶馆", description: "吃完后坐一会儿，接江南文化体验。", time: "13:30" },
+      ],
+    };
+  }
+
+  return null;
+}
+
+function buildMockReply(intent, result) {
+  if (intent.name === "generate_route") {
+    return `好呀，我给你安排一条${result.title}。上午先去拙政园，看远香堂和与谁同坐轩；中午转到平江路，吃苏式汤面和桂花糖粥；下午可以坐进评弹茶馆，轻轻松松收尾。`;
+  }
+
+  if (intent.name === "spot_explain") {
+    return `我们就讲${result.spot}。${result.text}我会用短句慢慢讲，你边走边听就好。`;
+  }
+
+  if (intent.name === "nearby_recommend") {
+    return `附近我推荐去${result.location}。可以先吃苏式汤面，再尝桂花糖粥，时间宽松的话，去评弹茶馆坐一会儿，很有苏州味。`;
+  }
+
+  return "可以呀。我是苏丽娘，你可以问我路线、园林故事、附近美食，或者让我把讲解说得更诗意一点。";
 }
 
 function sendJson(res, status, payload) {
