@@ -1,4 +1,4 @@
-﻿const appShell = document.querySelector(".app-shell");
+const appShell = document.querySelector(".app-shell");
 const screens = [...document.querySelectorAll(".screen")];
 const avatarVideo = document.querySelector("#avatar-video");
 const statusLabel = document.querySelector("#status-label");
@@ -60,12 +60,16 @@ let voiceResponseActive = false;
 let voiceIdleTimer = null;
 let voiceSpeakingFallbackTimer = null;
 let voicePlaybackIdleTimer = null;
+let voicePressConfirmTimer = null;
+let voiceThinkingTimeoutTimer = null;
 let voicePressStartedAt = 0;
 let voiceCapturedBytes = 0;
 let voiceSentAudioBytes = 0;
 let activeVoiceVideoIndex = Math.max(0, voiceVideos.findIndex((video) => video.classList.contains("active")));
 let currentVoiceVideoName = "idle_loop.mp4";
 let pendingVoiceVideoName = "";
+let voiceVisualState = "idle";
+let voiceVideoTransitionId = 0;
 
 const screenVideoMap = {
   welcome: "welcome_once.mp4",
@@ -91,6 +95,12 @@ const stateText = {
 };
 
 const voiceVideoFiles = ["idle_loop.mp4", "listening_loop.mp4", "thinking_loop.mp4", "speaking_loop.mp4"];
+const voiceStateConfig = {
+  idle: { video: "idle_loop.mp4", label: "\u7b49\u4f60\u63d0\u95ee" },
+  listening: { video: "listening_loop.mp4", label: "\u6b63\u5728\u503e\u542c" },
+  thinking: { video: "thinking_loop.mp4", label: "\u6b63\u5728\u601d\u8003" },
+  speaking: { video: "speaking_loop.mp4", label: "\u6b63\u5728\u56de\u5e94" },
+};
 
 function escapeHtml(value) {
   return String(value)
@@ -109,7 +119,7 @@ function setAvatar(videoName, label) {
     avatarVideo.play().catch(() => {});
   }
   if (statusLabel) {
-    statusLabel.textContent = label || stateText[videoName] || "绛変綘鎻愰棶";
+    statusLabel.textContent = label || stateText[videoName] || "等你提问";
   }
 }
 
@@ -160,9 +170,9 @@ function stopAskAmbient() {
 function startAskAmbient() {
   stopAskAmbient();
   const sequence = [
-    { video: "listening_loop.mp4", label: "姝ｅ湪鍊惧惉", duration: 4200, loop: false },
-    { video: "smile_once.mp4", label: "寰瑧绛夊緟", duration: 5200, loop: false },
-    { video: "idle_loop.mp4", label: "绛変綘鎻愰棶", duration: 8200, loop: true },
+    { video: "listening_loop.mp4", label: "正在倾听", duration: 4200, loop: false },
+    { video: "smile_once.mp4", label: "微笑等待", duration: 5200, loop: false },
+    { video: "idle_loop.mp4", label: "等你提问", duration: 8200, loop: true },
   ];
   let index = 0;
 
@@ -198,7 +208,7 @@ function showScreen(name) {
   setAvatar(mapped, stateText[mapped]);
   setMiniVideos(name);
   if (name === "voice" && !voicePressing && !voiceResponseActive) {
-    setVoiceUi("idle", voiceSessionReady ? "\u8bed\u97f3\u4f1a\u8bdd\u5df2\u5c31\u7eea\uff0c\u53ef\u4ee5\u5f00\u59cb\u63d0\u95ee" : "\u8bed\u97f3\u4f1a\u8bdd\u5c31\u7eea\u540e\uff0c\u53ef\u4ee5\u5f00\u59cb\u63d0\u95ee", { force: true });
+    requestVoiceState("idle", voiceSessionReady ? "\u8bed\u97f3\u4f1a\u8bdd\u5df2\u5c31\u7eea\uff0c\u53ef\u4ee5\u5f00\u59cb\u63d0\u95ee" : "\u8bed\u97f3\u4f1a\u8bdd\u5c31\u7eea\u540e\uff0c\u53ef\u4ee5\u5f00\u59cb\u63d0\u95ee", { force: true });
   }
 }
 
@@ -207,7 +217,7 @@ function getSelectedPreferences() {
 }
 
 function answerQuestion(query) {
-  const text = query.trim() || "甯垜瀹夋帓鍗婂ぉ鑻忓窞璺嚎";
+  const text = query.trim() || "帮我安排半天苏州路线";
   const match =
     content.qa.find((item) => item.keywords.some((keyword) => text.includes(keyword))) ||
     content.qa.find((item) => item.id === "route") ||
@@ -252,9 +262,9 @@ function setAskThinkingAnimation() {
   setAskMiniVideo("thinking_loop.mp4", true);
   setAvatar("thinking_loop.mp4", "\u6b63\u5728\u601d\u8003");
   setTimeout(() => {
-    if (askState) askState.textContent = "姝ｅ湪璁茶В";
+    if (askState) askState.textContent = "正在讲解";
     setAskMiniVideo("speaking_loop.mp4", true);
-    setAvatar("speaking_loop.mp4", "姝ｅ湪璁茶В");
+    setAvatar("speaking_loop.mp4", "正在讲解");
     askAmbientTimer = setTimeout(startAskAmbient, 2800);
   }, 900);
 }
@@ -287,7 +297,7 @@ function renderRoute(route) {
         const attrs = action.screen
           ? `data-go="${escapeHtml(action.screen)}"`
           : action.video
-            ? `data-video="${escapeHtml(action.video)}" data-state="姝ｅ湪璁茶В"`
+            ? `data-video="${escapeHtml(action.video)}" data-state="正在讲解"`
             : "";
         return `
           <article class="route-node">
@@ -295,7 +305,7 @@ function renderRoute(route) {
             <div>
               <h3>${escapeHtml(node.title)}</h3>
               <p>${escapeHtml(node.description)}</p>
-              <button ${attrs}>${escapeHtml(action.label || "鏌ョ湅")}</button>
+              <button ${attrs}>${escapeHtml(action.label || "查看")}</button>
             </div>
           </article>
         `;
@@ -314,7 +324,7 @@ function selectSpot(id) {
   if (selectedSpotSummary) selectedSpotSummary.textContent = spot.summary;
   if (spotTitle) spotTitle.textContent = spot.name;
   if (spotStory) spotStory.textContent = spot.story;
-  setAvatar("guide_once.mp4", "寮曞鏅偣");
+  setAvatar("guide_once.mp4", "引导景点");
   return spot;
 }
 
@@ -356,7 +366,7 @@ function renderNearby() {
           <article>
             <span>${escapeHtml(item.title)}</span>
             <p>${escapeHtml(item.description)}</p>
-            <button data-add-nearby="${index}">鍔犲叆琛岀▼</button>
+            <button data-add-nearby="${index}">加入行程</button>
           </article>
         `,
       )
@@ -384,12 +394,6 @@ function initQuickQuestion() {
   if (questionInput) questionInput.value = content.quickQuestions[0];
 }
 
-function normalizeVoiceState(state, text = "") {
-  if (state === "listening" && /continue|追问|继续/.test(text)) return "idle";
-  if (["idle", "listening", "thinking", "speaking"].includes(state)) return state;
-  return "idle";
-}
-
 function clearVoiceIdleTimer() {
   if (voiceIdleTimer) {
     window.clearTimeout(voiceIdleTimer);
@@ -411,6 +415,28 @@ function clearVoicePlaybackIdleTimer() {
   }
 }
 
+function clearVoicePressConfirmTimer() {
+  if (voicePressConfirmTimer) {
+    window.clearTimeout(voicePressConfirmTimer);
+    voicePressConfirmTimer = null;
+  }
+}
+
+function clearVoiceThinkingTimeoutTimer() {
+  if (voiceThinkingTimeoutTimer) {
+    window.clearTimeout(voiceThinkingTimeoutTimer);
+    voiceThinkingTimeoutTimer = null;
+  }
+}
+
+function clearVoiceTimers() {
+  clearVoiceIdleTimer();
+  clearVoiceSpeakingFallbackTimer();
+  clearVoicePlaybackIdleTimer();
+  clearVoicePressConfirmTimer();
+  clearVoiceThinkingTimeoutTimer();
+}
+
 function scheduleVoiceIdle(delay = 2400, text = "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee") {
   clearVoiceIdleTimer();
   voiceIdleTimer = window.setTimeout(() => {
@@ -420,10 +446,8 @@ function scheduleVoiceIdle(delay = 2400, text = "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\
 
 function forceVoiceIdle(text = "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee") {
   voiceResponseActive = false;
-  clearVoiceIdleTimer();
-  clearVoiceSpeakingFallbackTimer();
-  clearVoicePlaybackIdleTimer();
-  setVoiceUi("idle", text, { force: true });
+  clearVoiceTimers();
+  requestVoiceState("idle", text, { force: true });
 }
 
 function markVoiceSpeaking(text = "\u82cf\u4e3d\u5a18\u6b63\u5728\u64ad\u62a5") {
@@ -431,49 +455,37 @@ function markVoiceSpeaking(text = "\u82cf\u4e3d\u5a18\u6b63\u5728\u64ad\u62a5") 
   clearVoiceIdleTimer();
   clearVoiceSpeakingFallbackTimer();
   clearVoicePlaybackIdleTimer();
-  setVoiceUi("speaking", text, { force: true });
+  clearVoiceThinkingTimeoutTimer();
+  requestVoiceState("speaking", text, { force: true });
   voiceSpeakingFallbackTimer = window.setTimeout(() => {
     forceVoiceIdle("\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
-  }, 60000);
+  }, 24000);
 }
 
 function scheduleVoiceIdleAfterPlayback(text = "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee") {
   clearVoiceIdleTimer();
   clearVoicePlaybackIdleTimer();
   const now = voiceAudioContext?.currentTime || 0;
-  const remainingMs = Math.min(12000, Math.max(700, (voicePlaybackTime - now) * 1000 + 600));
+  const remainingMs = Math.min(8000, Math.max(500, (voicePlaybackTime - now) * 1000 + 500));
   voicePlaybackIdleTimer = window.setTimeout(() => {
     forceVoiceIdle(text);
   }, remainingMs);
 }
 
-function setVoiceUi(state, text, options = {}) {
-  const normalizedState = normalizeVoiceState(state, text);
-  if (voiceResponseActive && !options.force && normalizedState !== "speaking") {
+function requestVoiceState(state, text, options = {}) {
+  if (!voiceStateConfig[state]) state = "idle";
+  if (voiceResponseActive && !options.force && state !== "speaking") {
     return;
   }
-  state = normalizedState;
+  voiceVisualState = state;
   if (voiceState) voiceState.textContent = text;
   if (voiceOrb) voiceOrb.dataset.state = state;
   if (voiceTalkButton) {
     voiceTalkButton.classList.toggle("is-recording", state === "listening" && voicePressing);
   }
-  if (state === "listening") {
-    setAvatar("listening_loop.mp4", "\u6b63\u5728\u503e\u542c");
-    setVoiceVideo("listening_loop.mp4", "listening");
-  }
-  if (state === "thinking") {
-    setAvatar("thinking_loop.mp4", "\u6b63\u5728\u601d\u8003");
-    setVoiceVideo("thinking_loop.mp4", "thinking");
-  }
-  if (state === "speaking") {
-    setAvatar("speaking_loop.mp4", "\u6b63\u5728\u56de\u5e94");
-    setVoiceVideo("speaking_loop.mp4", "speaking");
-  }
-  if (state === "idle") {
-    setAvatar("idle_loop.mp4", "\u7b49\u4f60\u63d0\u95ee");
-    setVoiceVideo("idle_loop.mp4", "idle");
-  }
+  const config = voiceStateConfig[state];
+  setAvatar(config.video, config.label);
+  setVoiceVideo(config.video, state);
 }
 
 function setVoiceVideo(videoName, mode = "idle") {
@@ -485,18 +497,20 @@ function setVoiceVideo(videoName, mode = "idle") {
     return;
   }
 
+  const transitionId = ++voiceVideoTransitionId;
   const activeVideo = voiceVideos[activeVoiceVideoIndex];
   const nextIndex = voiceVideos.length > 1 ? 1 - activeVoiceVideoIndex : activeVoiceVideoIndex;
   const nextVideo = voiceVideos[nextIndex];
   pendingVoiceVideoName = videoName;
+  let started = false;
 
   const activate = () => {
-    if (pendingVoiceVideoName !== videoName) return;
+    if (transitionId !== voiceVideoTransitionId || pendingVoiceVideoName !== videoName) return;
+    if (nextVideo.readyState < 2 || !nextVideo.videoWidth) return;
     nextVideo.oncanplay = null;
     nextVideo.onloadeddata = null;
+    nextVideo.onplaying = null;
     nextVideo.loop = true;
-    nextVideo.currentTime = 0;
-    nextVideo.play().catch(() => {});
     nextVideo.classList.add("active");
     if (activeVideo && activeVideo !== nextVideo) {
       activeVideo.classList.remove("active");
@@ -506,15 +520,31 @@ function setVoiceVideo(videoName, mode = "idle") {
     currentVoiceVideoName = videoName;
   };
 
-  nextVideo.oncanplay = activate;
-  nextVideo.onloadeddata = activate;
+  const startNextVideo = () => {
+    if (started || transitionId !== voiceVideoTransitionId) return;
+    started = true;
+    nextVideo.currentTime = 0;
+    nextVideo
+      .play()
+      .then(() => requestAnimationFrame(() => requestAnimationFrame(activate)))
+      .catch(() => {});
+  };
+
+  nextVideo.oncanplay = startNextVideo;
+  nextVideo.onloadeddata = startNextVideo;
+  nextVideo.onplaying = activate;
   nextVideo.loop = true;
+  nextVideo.muted = true;
+  nextVideo.playsInline = true;
   if (!nextVideo.src.endsWith(videoName)) {
     nextVideo.src = nextSrc;
     nextVideo.load();
   } else {
-    activate();
+    startNextVideo();
   }
+  window.setTimeout(() => {
+    if (transitionId === voiceVideoTransitionId && currentVoiceVideoName !== videoName) startNextVideo();
+  }, 500);
 }
 
 function setVoiceBridgeBadge(text) {
@@ -545,7 +575,11 @@ function connectVoiceBridge(inputMod = "text") {
   pendingAudioChunks = [];
   pendingAudioEnd = false;
   setVoiceBridgeBadge("\u8fde\u63a5\u4e2d");
-  setVoiceUi(voicePressing ? "listening" : "thinking", voicePressing ? "\u6b63\u5728\u542c\uff0c\u677e\u5f00\u540e\u53d1\u9001" : "\u6b63\u5728\u8fde\u63a5\u672c\u5730\u8bed\u97f3\u6865\u63a5\u5c42");
+  if (voicePressing) {
+    if (voiceState) voiceState.textContent = "\u6b63\u5728\u51c6\u5907\u542c\u4f60\u8bf4\u8bdd";
+  } else {
+    requestVoiceState("thinking", "\u6b63\u5728\u8fde\u63a5\u672c\u5730\u8bed\u97f3\u6865\u63a5\u5c42");
+  }
   voiceSocket = new WebSocket(voiceBridgeUrl);
   const socket = voiceSocket;
   voiceSocket.binaryType = "arraybuffer";
@@ -576,7 +610,7 @@ function connectVoiceBridge(inputMod = "text") {
     voiceSessionReady = false;
     voiceSessionInputMod = "";
     setVoiceBridgeBadge("\u5df2\u65ad\u5f00");
-    if (!voiceSessionClosing) setVoiceUi("idle", "\u8bed\u97f3\u6865\u63a5\u5c42\u5df2\u65ad\u5f00");
+    if (!voiceSessionClosing) requestVoiceState("idle", "\u8bed\u97f3\u6865\u63a5\u5c42\u5df2\u65ad\u5f00");
   });
 
   voiceSocket.addEventListener("error", () => {
@@ -584,7 +618,7 @@ function connectVoiceBridge(inputMod = "text") {
     voiceConnected = false;
     voiceSessionReady = false;
     setVoiceBridgeBadge("\u672a\u8fde\u63a5");
-    setVoiceUi("idle", "\u65e0\u6cd5\u8fde\u63a5\u8bed\u97f3\u6865\u63a5\u5c42\uff0c\u8bf7\u5148\u542f\u52a8 voice_bridge");
+    requestVoiceState("idle", "\u65e0\u6cd5\u8fde\u63a5\u8bed\u97f3\u6865\u63a5\u5c42\uff0c\u8bf7\u5148\u542f\u52a8 voice_bridge");
   });
 }
 
@@ -592,15 +626,11 @@ function handleVoiceEvent(event) {
   if (event.type === "bridge.ready") {
     setVoiceBridgeBadge(event.mock ? "Mock" : "\u771f\u5b9e");
     if (!voicePressing) {
-      setVoiceUi("thinking", event.mock ? "\u5df2\u8fde\u63a5 Mock \u6865\u63a5" : "\u5df2\u8fde\u63a5\u771f\u5b9e\u8bed\u97f3\u6865\u63a5");
+      requestVoiceState("thinking", event.mock ? "\u5df2\u8fde\u63a5 Mock \u6865\u63a5" : "\u5df2\u8fde\u63a5\u771f\u5b9e\u8bed\u97f3\u6865\u63a5");
     }
   }
   if (event.type === "state.changed") {
-    if (voicePressing && event.state !== "speaking") {
-      setVoiceUi("listening", "\u6b63\u5728\u542c\uff0c\u677e\u5f00\u540e\u53d1\u9001");
-    } else {
-      setVoiceUi(event.state || "idle", event.label || "\u8bed\u97f3\u72b6\u6001\u5df2\u66f4\u65b0");
-    }
+    if (!voiceResponseActive && event.label && voiceState && !voicePressing) voiceState.textContent = event.label;
   }
   if (event.type === "session.started") {
     voiceSessionReady = true;
@@ -609,11 +639,11 @@ function handleVoiceEvent(event) {
     clearVoiceSpeakingFallbackTimer();
     clearVoicePlaybackIdleTimer();
     if (voicePressing) {
-      setVoiceUi("listening", "\u6b63\u5728\u542c\uff0c\u677e\u5f00\u540e\u53d1\u9001");
+      requestVoiceState("listening", "\u6b63\u5728\u542c\uff0c\u677e\u5f00\u540e\u53d1\u9001");
     } else if (pendingAudioEnd) {
-      setVoiceUi("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u8bc6\u522b\u4f60\u7684\u95ee\u9898");
+      requestVoiceState("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u8bc6\u522b\u4f60\u7684\u95ee\u9898");
     } else {
-      setVoiceUi("idle", "\u8bed\u97f3\u4f1a\u8bdd\u5df2\u5c31\u7eea\uff0c\u53ef\u4ee5\u5f00\u59cb\u63d0\u95ee");
+      requestVoiceState("idle", "\u8bed\u97f3\u4f1a\u8bdd\u5df2\u5c31\u7eea\uff0c\u53ef\u4ee5\u5f00\u59cb\u63d0\u95ee");
     }
     flushPendingAudioChunks();
     flushPendingAudioEnd();
@@ -623,12 +653,12 @@ function handleVoiceEvent(event) {
     if (voiceUserText) voiceUserText.textContent = event.text || "\u5df2\u6536\u5230\u8bed\u97f3\u95ee\u9898";
     if (questionInput && event.text) questionInput.value = event.text;
     voiceResponseActive = false;
-    setVoiceUi("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u601d\u8003");
+    requestVoiceState("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u601d\u8003");
     scheduleVoiceIdle(7000, "\u6ca1\u6709\u6536\u5230\u56de\u7b54\uff0c\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
   }
   if (event.type === "asr.partial") {
     if (voiceUserText && event.text) voiceUserText.textContent = event.text;
-    setVoiceUi("listening", "\u6b63\u5728\u8bc6\u522b\u4f60\u7684\u8bed\u97f3");
+    if (voicePressing) requestVoiceState("listening", "\u6b63\u5728\u542c\uff0c\u677e\u5f00\u540e\u53d1\u9001");
   }
   if (event.type === "business.intent") {
     applyVoiceIntent(event.intent, event.params || {});
@@ -658,7 +688,7 @@ function handleVoiceEvent(event) {
     clearVoiceSpeakingFallbackTimer();
     clearVoicePlaybackIdleTimer();
     setVoiceBridgeBadge("\u9519\u8bef");
-    setVoiceUi("idle", event.message || "\u8bed\u97f3\u94fe\u8def\u51fa\u73b0\u9519\u8bef");
+    requestVoiceState("idle", event.message || "\u8bed\u97f3\u94fe\u8def\u51fa\u73b0\u9519\u8bef");
   }
 }
 
@@ -672,7 +702,7 @@ function flushPendingVoiceQuery() {
   clearVoicePlaybackIdleTimer();
   voicePlaybackTime = voiceAudioContext?.currentTime || 0;
   voiceAudioContext?.resume?.().catch(() => {});
-  setVoiceUi("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u7406\u89e3\u4f60\u7684\u95ee\u9898");
+  requestVoiceState("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u7406\u89e3\u4f60\u7684\u95ee\u9898");
   voiceSocket.send(JSON.stringify({ type: "text.query", content: query }));
 }
 
@@ -724,7 +754,7 @@ function endVoiceSession() {
   voiceConnected = false;
   voiceSessionReady = false;
   setVoiceBridgeBadge("\u5df2\u7ed3\u675f");
-  setVoiceUi("idle", "\u8bed\u97f3\u4f1a\u8bdd\u5df2\u7ed3\u675f");
+  requestVoiceState("idle", "\u8bed\u97f3\u4f1a\u8bdd\u5df2\u7ed3\u675f");
 }
 
 async function startVoicePress() {
@@ -734,22 +764,24 @@ async function startVoicePress() {
   voiceCapturedBytes = 0;
   voiceSentAudioBytes = 0;
   voiceResponseActive = false;
-  clearVoiceIdleTimer();
-  clearVoiceSpeakingFallbackTimer();
-  clearVoicePlaybackIdleTimer();
+  clearVoiceTimers();
   if (voiceTalkButton) voiceTalkButton.classList.add("is-recording");
   setVoiceWaveLevel(0.12);
   connectVoiceBridge("push_to_talk");
   if (voiceUserText) voiceUserText.textContent = "\u6b63\u5728\u542c\u4f60\u8bf4\u8bdd...";
   if (voiceAiText) voiceAiText.textContent = "\u677e\u5f00\u540e\uff0c\u82cf\u4e3d\u5a18\u4f1a\u5f00\u59cb\u56de\u7b54\u3002";
-  setVoiceUi("listening", "\u6b63\u5728\u542c\uff0c\u677e\u5f00\u540e\u53d1\u9001");
+  if (voiceState) voiceState.textContent = "\u6b63\u5728\u542c\uff0c\u677e\u5f00\u540e\u53d1\u9001";
+  voicePressConfirmTimer = window.setTimeout(() => {
+    if (voicePressing) requestVoiceState("listening", "\u6b63\u5728\u542c\uff0c\u677e\u5f00\u540e\u53d1\u9001", { force: true });
+  }, 180);
   try {
     await startMicrophoneCapture();
   } catch (error) {
     voicePressing = false;
+    clearVoicePressConfirmTimer();
     if (voiceTalkButton) voiceTalkButton.classList.remove("is-recording");
     setVoiceWaveLevel(0);
-    setVoiceUi("idle", error.message || "\u65e0\u6cd5\u6253\u5f00\u9ea6\u514b\u98ce");
+    requestVoiceState("idle", error.message || "\u65e0\u6cd5\u6253\u5f00\u9ea6\u514b\u98ce", { force: true });
   }
 }
 
@@ -757,6 +789,7 @@ function finishVoicePress() {
   if (!voicePressing) return;
   const pressDuration = performance.now() - voicePressStartedAt;
   voicePressing = false;
+  clearVoicePressConfirmTimer();
   if (voiceTalkButton) voiceTalkButton.classList.remove("is-recording");
   stopMicrophoneCapture(pressDuration < 450);
   if (pressDuration < 450 || voiceCapturedBytes < 960) {
@@ -771,11 +804,13 @@ function finishVoicePress() {
       voiceSessionInputMod = "";
     }
     setVoiceWaveLevel(0);
-    setVoiceUi("idle", "\u6309\u4f4f\u8bf4\u8bdd\uff0c\u677e\u5f00\u540e\u53d1\u9001", { force: true });
+    requestVoiceState("idle", "\u6309\u4f4f\u8bf4\u8bdd\uff0c\u677e\u5f00\u540e\u53d1\u9001", { force: true });
     return;
   }
-  setVoiceUi("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u8bc6\u522b\u4f60\u7684\u95ee\u9898");
-  scheduleVoiceIdle(9000, "\u6ca1\u6709\u8bc6\u522b\u5230\u65b0\u8bed\u97f3\uff0c\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
+  requestVoiceState("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u8bc6\u522b\u4f60\u7684\u95ee\u9898");
+  voiceThinkingTimeoutTimer = window.setTimeout(() => {
+    forceVoiceIdle("\u6ca1\u6709\u8bc6\u522b\u5230\u65b0\u8bed\u97f3\uff0c\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
+  }, 10000);
   pendingAudioEnd = true;
   flushPendingAudioChunks();
   flushPendingAudioEnd();
@@ -882,12 +917,12 @@ function floatToPcm16(samples) {
 
 function applyVoiceIntent(intent, params) {
   const labelMap = {
-    generate_route: "姝ｅ湪鏌ヨ閫傚悎浣犵殑鑻忓窞璺嚎",
-    spot_explain: "姝ｅ湪鏁寸悊鏅偣璁茶В",
-    nearby_recommend: "姝ｅ湪鏌ユ壘闄勮繎鎺ㄨ崘",
+    generate_route: "正在查询适合你的苏州路线",
+    spot_explain: "正在整理景点讲解",
+    nearby_recommend: "正在查找附近推荐",
     smalltalk: "\u82cf\u4e3d\u5a18\u6b63\u5728\u56de\u5e94",
   };
-  setVoiceUi("thinking", labelMap[intent] || "\u82cf\u4e3d\u5a18\u6b63\u5728\u7406\u89e3\u4f60\u7684\u9700\u6c42");
+  requestVoiceState("thinking", labelMap[intent] || "\u82cf\u4e3d\u5a18\u6b63\u5728\u7406\u89e3\u4f60\u7684\u9700\u6c42");
 
   if (intent === "spot_explain" && params.spot) {
     const matched = content.spots.find((spot) => spot.name === params.spot);
@@ -923,8 +958,8 @@ function renderNearbyResult(result) {
       ? `\u5efa\u8bae\u524d\u5f80${result.location}\uff0c\u9002\u5408\u63a5\u5728\u5f53\u524d\u884c\u7a0b\u540e\u3002`
       : "\u6839\u636e\u5f53\u524d\u4f4d\u7f6e\u63a8\u8350\u3002";
     nearbyFeature.innerHTML = `
-      <p class="section-kicker">闄勮繎鎺ㄨ崘</p>
-      <h3>${escapeHtml(result.title || "鑻忓窞闄勮繎鎺ㄨ崘")}</h3>
+      <p class="section-kicker">附近推荐</p>
+      <h3>${escapeHtml(result.title || "苏州附近推荐")}</h3>
       <p>${escapeHtml(nearbySummary)}</p>
     `;
   }
@@ -935,7 +970,7 @@ function renderNearbyResult(result) {
           <article>
             <span>${escapeHtml(item.title)}</span>
             <p>${escapeHtml(item.description)}</p>
-            <button data-add-nearby="${index}">鍔犲叆琛岀▼</button>
+            <button data-add-nearby="${index}">加入行程</button>
           </article>
         `,
       )
@@ -1036,15 +1071,15 @@ document.addEventListener("click", (event) => {
   }
 
   if (event.target.closest("[data-demo-speaking]")) {
-    setAvatar("speaking_loop.mp4", "姝ｅ湪璁茶В");
+    setAvatar("speaking_loop.mp4", "正在讲解");
   }
 
   if (event.target.closest("[data-demo-recital]")) {
-    setAvatar("recital_once.mp4", "璇楄瘝鍚熻");
+    setAvatar("recital_once.mp4", "诗词吟诵");
   }
 
   if (event.target.closest("[data-demo-guide]")) {
-    setAvatar("guide_once.mp4", "寮曞鏅偣");
+    setAvatar("guide_once.mp4", "引导景点");
   }
 });
 
@@ -1073,7 +1108,7 @@ if (voiceTalkButton) {
     clearVoiceIdleTimer();
     clearVoicePlaybackIdleTimer();
     stopMicrophoneCapture();
-    setVoiceUi("idle", "\u5df2\u53d6\u6d88\u672c\u8f6e\u8bed\u97f3");
+    requestVoiceState("idle", "\u5df2\u53d6\u6d88\u672c\u8f6e\u8bed\u97f3");
   });
   voiceTalkButton.addEventListener("contextmenu", (event) => event.preventDefault());
   voiceTalkButton.addEventListener("dragstart", (event) => event.preventDefault());
@@ -1092,7 +1127,7 @@ document.querySelectorAll("video").forEach((video) => {
   video.addEventListener("ended", () => {
     if (video.classList.contains("welcome-video")) return;
     if (video.id === "avatar-video") {
-      setAvatar("idle_loop.mp4", "绛変綘鎻愰棶");
+      setAvatar("idle_loop.mp4", "等你提问");
     }
   });
 });
