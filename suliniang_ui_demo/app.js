@@ -25,6 +25,7 @@ const voiceBridgeMode = document.querySelector("#voice-bridge-mode");
 const voiceOrb = document.querySelector("#voice-orb");
 const voiceTalkButton = document.querySelector("[data-voice-talk]");
 const voiceWave = document.querySelector("#voice-wave");
+const voiceVideo = document.querySelector(".voice-video");
 
 const content = window.SULINIANG_CONTENT;
 const videoBase = "../suliniang_project_materials/assets_3d_character_videos/normalized/";
@@ -363,10 +364,33 @@ function setVoiceUi(state, text) {
   if (voiceTalkButton) {
     voiceTalkButton.classList.toggle("is-recording", state === "listening" && voicePressing);
   }
-  if (state === "listening") setAvatar("listening_loop.mp4", "瀹炴椂鍊惧惉");
-  if (state === "thinking") setAvatar("thinking_loop.mp4", "\u6b63\u5728\u601d\u8003");
-  if (state === "speaking") setAvatar("speaking_loop.mp4", "姝ｅ湪鍥炲簲");
-  if (state === "idle") setAvatar("idle_loop.mp4", "绛変綘鎻愰棶");
+  if (state === "listening") {
+    setAvatar("listening_loop.mp4", "\u6b63\u5728\u503e\u542c");
+    setVoiceVideo("listening_loop.mp4");
+  }
+  if (state === "thinking") {
+    setAvatar("thinking_loop.mp4", "\u6b63\u5728\u601d\u8003");
+    setVoiceVideo("thinking_loop.mp4");
+  }
+  if (state === "speaking") {
+    setAvatar("speaking_loop.mp4", "\u6b63\u5728\u56de\u5e94");
+    setVoiceVideo("speaking_loop.mp4");
+  }
+  if (state === "idle") {
+    setAvatar("idle_loop.mp4", "\u7b49\u4f60\u63d0\u95ee");
+    setVoiceVideo("idle_loop.mp4");
+  }
+}
+
+function setVoiceVideo(videoName) {
+  if (!voiceVideo) return;
+  const nextSrc = videoBase + videoName;
+  if (!voiceVideo.src.endsWith(videoName)) {
+    voiceVideo.src = nextSrc;
+    voiceVideo.loop = true;
+    voiceVideo.currentTime = 0;
+    voiceVideo.play().catch(() => {});
+  }
 }
 
 function setVoiceBridgeBadge(text) {
@@ -449,7 +473,7 @@ function handleVoiceEvent(event) {
   }
   if (event.type === "session.started") {
     voiceSessionReady = true;
-    setVoiceUi("listening", "\u8bed\u97f3\u4f1a\u8bdd\u5df2\u5c31\u7eea\uff0c\u53ef\u4ee5\u5f00\u59cb\u63d0\u95ee");
+    setVoiceUi("idle", "\u8bed\u97f3\u4f1a\u8bdd\u5df2\u5c31\u7eea\uff0c\u53ef\u4ee5\u5f00\u59cb\u63d0\u95ee");
     flushPendingAudioChunks();
     flushPendingAudioEnd();
     flushPendingVoiceQuery();
@@ -477,7 +501,7 @@ function handleVoiceEvent(event) {
     setVoiceUi("speaking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u64ad\u62a5");
   }
   if (event.type === "tts.end" || event.type === "chat.ended") {
-    setVoiceUi("listening", "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
+    setVoiceUi("idle", "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
   }
   if (event.type === "error") {
     voiceSessionReady = false;
