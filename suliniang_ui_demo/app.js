@@ -59,11 +59,12 @@ let pendingAudioEnd = false;
 let voiceResponseActive = false;
 let voiceIdleTimer = null;
 let voiceSpeakingFallbackTimer = null;
+let voicePlaybackIdleTimer = null;
 
 const screenVideoMap = {
   welcome: "welcome_once.mp4",
   home: "idle_loop.mp4",
-  voice: "listening_loop.mp4",
+  voice: "idle_loop.mp4",
   ask: "listening_loop.mp4",
   route: "thinking_loop.mp4",
   guide: "guide_once.mp4",
@@ -177,6 +178,9 @@ function showScreen(name) {
   const mapped = screenVideoMap[name] || "idle_loop.mp4";
   setAvatar(mapped, stateText[mapped]);
   setMiniVideos(name);
+  if (name === "voice" && !voicePressing && !voiceResponseActive) {
+    setVoiceUi("idle", voiceSessionReady ? "\u8bed\u97f3\u4f1a\u8bdd\u5df2\u5c31\u7eea\uff0c\u53ef\u4ee5\u5f00\u59cb\u63d0\u95ee" : "\u8bed\u97f3\u4f1a\u8bdd\u5c31\u7eea\u540e\uff0c\u53ef\u4ee5\u5f00\u59cb\u63d0\u95ee", { force: true });
+  }
 }
 
 function getSelectedPreferences() {
@@ -381,6 +385,13 @@ function clearVoiceSpeakingFallbackTimer() {
   }
 }
 
+function clearVoicePlaybackIdleTimer() {
+  if (voicePlaybackIdleTimer) {
+    window.clearTimeout(voicePlaybackIdleTimer);
+    voicePlaybackIdleTimer = null;
+  }
+}
+
 function scheduleVoiceIdle(delay = 2400, text = "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee") {
   clearVoiceIdleTimer();
   voiceIdleTimer = window.setTimeout(() => {
@@ -393,11 +404,24 @@ function markVoiceSpeaking(text = "\u82cf\u4e3d\u5a18\u6b63\u5728\u64ad\u62a5") 
   voiceResponseActive = true;
   clearVoiceIdleTimer();
   clearVoiceSpeakingFallbackTimer();
+  clearVoicePlaybackIdleTimer();
   setVoiceUi("speaking", text, { force: true });
   voiceSpeakingFallbackTimer = window.setTimeout(() => {
     voiceResponseActive = false;
     scheduleVoiceIdle(300, "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
-  }, 18000);
+  }, 60000);
+}
+
+function scheduleVoiceIdleAfterPlayback(text = "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee") {
+  clearVoiceIdleTimer();
+  clearVoicePlaybackIdleTimer();
+  const now = voiceAudioContext?.currentTime || 0;
+  const remainingMs = Math.max(900, (voicePlaybackTime - now) * 1000 + 700);
+  voicePlaybackIdleTimer = window.setTimeout(() => {
+    voiceResponseActive = false;
+    clearVoiceSpeakingFallbackTimer();
+    setVoiceUi("idle", text, { force: true });
+  }, remainingMs);
 }
 
 function setVoiceUi(state, text, options = {}) {
@@ -435,10 +459,10 @@ function setVoiceVideo(videoName, mode = "idle") {
   if (voiceOrb) voiceOrb.dataset.video = mode;
   if (!voiceVideo.src.endsWith(videoName)) {
     voiceVideo.src = nextSrc;
-    voiceVideo.loop = true;
     voiceVideo.currentTime = 0;
-    voiceVideo.play().catch(() => {});
   }
+  voiceVideo.loop = true;
+  voiceVideo.play().catch(() => {});
 }
 
 function setVoiceBridgeBadge(text) {
@@ -469,7 +493,7 @@ function connectVoiceBridge(inputMod = "text") {
   pendingAudioChunks = [];
   pendingAudioEnd = false;
   setVoiceBridgeBadge("\u8fde\u63a5\u4e2d");
-  setVoiceUi("thinking", "\u6b63\u5728\u8fde\u63a5\u672c\u5730\u8bed\u97f3\u6865\u63a5\u5c42");
+  setVoiceUi(voicePressing ? "listening" : "thinking", voicePressing ? "\u6b63\u5728\u542c\uff0c\u677e\u5f00\u540e\u53d1\u9001" : "\u6b63\u5728\u8fde\u63a5\u672c\u5730\u8bed\u97f3\u6865\u63a5\u5c42");
   voiceSocket = new WebSocket(voiceBridgeUrl);
   const socket = voiceSocket;
   voiceSocket.binaryType = "arraybuffer";
@@ -515,17 +539,30 @@ function connectVoiceBridge(inputMod = "text") {
 function handleVoiceEvent(event) {
   if (event.type === "bridge.ready") {
     setVoiceBridgeBadge(event.mock ? "Mock" : "\u771f\u5b9e");
-    setVoiceUi("thinking", event.mock ? "\u5df2\u8fde\u63a5 Mock \u6865\u63a5" : "\u5df2\u8fde\u63a5\u771f\u5b9e\u8bed\u97f3\u6865\u63a5");
+    if (!voicePressing) {
+      setVoiceUi("thinking", event.mock ? "\u5df2\u8fde\u63a5 Mock \u6865\u63a5" : "\u5df2\u8fde\u63a5\u771f\u5b9e\u8bed\u97f3\u6865\u63a5");
+    }
   }
   if (event.type === "state.changed") {
-    setVoiceUi(event.state || "idle", event.label || "\u8bed\u97f3\u72b6\u6001\u5df2\u66f4\u65b0");
+    if (voicePressing && event.state !== "speaking") {
+      setVoiceUi("listening", "\u6b63\u5728\u542c\uff0c\u677e\u5f00\u540e\u53d1\u9001");
+    } else {
+      setVoiceUi(event.state || "idle", event.label || "\u8bed\u97f3\u72b6\u6001\u5df2\u66f4\u65b0");
+    }
   }
   if (event.type === "session.started") {
     voiceSessionReady = true;
     voiceResponseActive = false;
     clearVoiceIdleTimer();
     clearVoiceSpeakingFallbackTimer();
-    setVoiceUi("idle", "\u8bed\u97f3\u4f1a\u8bdd\u5df2\u5c31\u7eea\uff0c\u53ef\u4ee5\u5f00\u59cb\u63d0\u95ee");
+    clearVoicePlaybackIdleTimer();
+    if (voicePressing) {
+      setVoiceUi("listening", "\u6b63\u5728\u542c\uff0c\u677e\u5f00\u540e\u53d1\u9001");
+    } else if (pendingAudioEnd) {
+      setVoiceUi("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u8bc6\u522b\u4f60\u7684\u95ee\u9898");
+    } else {
+      setVoiceUi("idle", "\u8bed\u97f3\u4f1a\u8bdd\u5df2\u5c31\u7eea\uff0c\u53ef\u4ee5\u5f00\u59cb\u63d0\u95ee");
+    }
     flushPendingAudioChunks();
     flushPendingAudioEnd();
     flushPendingVoiceQuery();
@@ -555,18 +592,18 @@ function handleVoiceEvent(event) {
     markVoiceSpeaking("\u82cf\u4e3d\u5a18\u6b63\u5728\u64ad\u62a5");
   }
   if (event.type === "chat.ended") {
-    if (!voiceResponseActive) scheduleVoiceIdle(600, "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
+    clearVoiceIdleTimer();
   }
   if (event.type === "tts.end") {
-    voiceResponseActive = false;
     clearVoiceSpeakingFallbackTimer();
-    scheduleVoiceIdle(900, "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
+    scheduleVoiceIdleAfterPlayback("\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
   }
   if (event.type === "error") {
     voiceSessionReady = false;
     voiceResponseActive = false;
     clearVoiceIdleTimer();
     clearVoiceSpeakingFallbackTimer();
+    clearVoicePlaybackIdleTimer();
     setVoiceBridgeBadge("\u9519\u8bef");
     setVoiceUi("idle", event.message || "\u8bed\u97f3\u94fe\u8def\u51fa\u73b0\u9519\u8bef");
   }
@@ -579,6 +616,7 @@ function flushPendingVoiceQuery() {
   voiceResponseActive = false;
   clearVoiceIdleTimer();
   clearVoiceSpeakingFallbackTimer();
+  clearVoicePlaybackIdleTimer();
   voicePlaybackTime = voiceAudioContext?.currentTime || 0;
   voiceAudioContext?.resume?.().catch(() => {});
   setVoiceUi("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u7406\u89e3\u4f60\u7684\u95ee\u9898");
@@ -623,6 +661,7 @@ function endVoiceSession() {
   voiceResponseActive = false;
   clearVoiceIdleTimer();
   clearVoiceSpeakingFallbackTimer();
+  clearVoicePlaybackIdleTimer();
   voiceSocket?.send(JSON.stringify({ type: "session.end" }));
   voiceSocket?.close();
   voiceConnected = false;
@@ -632,10 +671,14 @@ function endVoiceSession() {
 }
 
 async function startVoicePress() {
+  if (voicePressing) return;
   voicePressing = true;
   voiceResponseActive = false;
   clearVoiceIdleTimer();
   clearVoiceSpeakingFallbackTimer();
+  clearVoicePlaybackIdleTimer();
+  if (voiceTalkButton) voiceTalkButton.classList.add("is-recording");
+  setVoiceWaveLevel(0.12);
   connectVoiceBridge("push_to_talk");
   if (voiceUserText) voiceUserText.textContent = "\u6b63\u5728\u542c\u4f60\u8bf4\u8bdd...";
   if (voiceAiText) voiceAiText.textContent = "\u677e\u5f00\u540e\uff0c\u82cf\u4e3d\u5a18\u4f1a\u5f00\u59cb\u56de\u7b54\u3002";
@@ -644,6 +687,8 @@ async function startVoicePress() {
     await startMicrophoneCapture();
   } catch (error) {
     voicePressing = false;
+    if (voiceTalkButton) voiceTalkButton.classList.remove("is-recording");
+    setVoiceWaveLevel(0);
     setVoiceUi("idle", error.message || "\u65e0\u6cd5\u6253\u5f00\u9ea6\u514b\u98ce");
   }
 }
@@ -838,6 +883,7 @@ function playPcmS16Le(arrayBuffer) {
   const startAt = Math.max(voiceAudioContext.currentTime, voicePlaybackTime);
   source.start(startAt);
   voicePlaybackTime = startAt + audioBuffer.duration;
+  scheduleVoiceIdleAfterPlayback("\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
 }
 
 document.addEventListener("click", (event) => {
@@ -939,10 +985,16 @@ if (voiceTalkButton) {
   });
   voiceTalkButton.addEventListener("pointerup", (event) => {
     event.preventDefault();
+    if (voiceTalkButton.hasPointerCapture?.(event.pointerId)) {
+      voiceTalkButton.releasePointerCapture(event.pointerId);
+    }
     finishVoicePress();
   });
   voiceTalkButton.addEventListener("pointercancel", () => {
     voicePressing = false;
+    if (voiceTalkButton) voiceTalkButton.classList.remove("is-recording");
+    clearVoiceIdleTimer();
+    clearVoicePlaybackIdleTimer();
     stopMicrophoneCapture();
     setVoiceUi("idle", "\u5df2\u53d6\u6d88\u672c\u8f6e\u8bed\u97f3");
   });
