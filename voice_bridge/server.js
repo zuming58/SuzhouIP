@@ -66,7 +66,7 @@ wss.on("connection", async (socket) => {
       if (MOCK_MODE) {
         mockClosed = false;
         send({ type: "session.started", dialogId: "mock-dialog" });
-        send({ type: "state.changed", state: "listening", label: "正在听" });
+        send({ type: "state.changed", state: "idle", label: "可以开始提问" });
         return;
       }
 
@@ -194,7 +194,7 @@ function mockReply(send, query, isClosed) {
     }
     send({ type: "chat.ended", text });
     send({ type: "tts.end" });
-    send({ type: "state.changed", state: "listening", label: "可以继续追问" });
+    send({ type: "state.changed", state: "idle", label: "可以继续追问" });
   };
 
   setTimeout(tick, 280);

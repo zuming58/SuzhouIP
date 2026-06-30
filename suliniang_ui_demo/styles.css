@@ -520,6 +520,22 @@ h1 {
   object-fit: contain;
   object-position: center bottom;
   display: block;
+  transform: translateY(0) scale(1);
+  transform-origin: center bottom;
+  transition: transform 180ms ease;
+  will-change: transform;
+}
+
+.voice-orb[data-video="listening"] .voice-video {
+  transform: translateY(5px) scale(1.14);
+}
+
+.voice-orb[data-video="thinking"] .voice-video {
+  transform: translateY(3px) scale(1.08);
+}
+
+.voice-orb[data-video="speaking"] .voice-video {
+  transform: translateY(4px) scale(1.12);
 }
 
 .voice-state {
