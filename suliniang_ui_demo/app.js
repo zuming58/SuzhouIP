@@ -60,6 +60,9 @@ let voiceResponseActive = false;
 let voiceIdleTimer = null;
 let voiceSpeakingFallbackTimer = null;
 let voicePlaybackIdleTimer = null;
+let voicePressStartedAt = 0;
+let voiceCapturedBytes = 0;
+let voiceSentAudioBytes = 0;
 
 const screenVideoMap = {
   welcome: "welcome_once.mp4",
@@ -83,6 +86,8 @@ const stateText = {
   "recital_once.mp4": "\u8bd7\u8bcd\u541f\u8bf5",
   "smile_once.mp4": "\u8bb2\u89e3\u5b8c\u6210",
 };
+
+const voiceVideoFiles = ["idle_loop.mp4", "listening_loop.mp4", "thinking_loop.mp4", "speaking_loop.mp4"];
 
 function escapeHtml(value) {
   return String(value)
@@ -129,6 +134,17 @@ function setAskMiniVideo(videoName, shouldLoop = true) {
   };
   next.src = nextSrc;
   next.load();
+}
+
+function preloadVoiceVideos() {
+  voiceVideoFiles.forEach((videoName) => {
+    const video = document.createElement("video");
+    video.src = videoBase + videoName;
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.load();
+  });
 }
 
 function stopAskAmbient() {
@@ -457,9 +473,17 @@ function setVoiceVideo(videoName, mode = "idle") {
   if (!voiceVideo) return;
   const nextSrc = videoBase + videoName;
   if (voiceOrb) voiceOrb.dataset.video = mode;
+  voiceVideo.removeAttribute("poster");
   if (!voiceVideo.src.endsWith(videoName)) {
+    voiceVideo.oncanplay = () => {
+      voiceVideo.oncanplay = null;
+      voiceVideo.play().catch(() => {});
+    };
     voiceVideo.src = nextSrc;
     voiceVideo.currentTime = 0;
+    voiceVideo.load();
+  } else if (voiceVideo.paused) {
+    voiceVideo.play().catch(() => {});
   }
   voiceVideo.loop = true;
   voiceVideo.play().catch(() => {});
@@ -625,8 +649,10 @@ function flushPendingVoiceQuery() {
 
 function sendVoiceAudioChunk(chunk) {
   if (!chunk?.byteLength) return;
+  voiceCapturedBytes += chunk.byteLength;
   if (voiceSessionReady && voiceSocket?.readyState === WebSocket.OPEN) {
     voiceSocket.send(chunk);
+    voiceSentAudioBytes += chunk.byteLength;
     return;
   }
   pendingAudioChunks.push(chunk);
@@ -636,7 +662,9 @@ function sendVoiceAudioChunk(chunk) {
 function flushPendingAudioChunks() {
   if (!voiceSessionReady || voiceSocket?.readyState !== WebSocket.OPEN) return;
   while (pendingAudioChunks.length) {
-    voiceSocket.send(pendingAudioChunks.shift());
+    const chunk = pendingAudioChunks.shift();
+    voiceSocket.send(chunk);
+    voiceSentAudioBytes += chunk.byteLength;
   }
 }
 
@@ -673,6 +701,9 @@ function endVoiceSession() {
 async function startVoicePress() {
   if (voicePressing) return;
   voicePressing = true;
+  voicePressStartedAt = performance.now();
+  voiceCapturedBytes = 0;
+  voiceSentAudioBytes = 0;
   voiceResponseActive = false;
   clearVoiceIdleTimer();
   clearVoiceSpeakingFallbackTimer();
@@ -695,9 +726,25 @@ async function startVoicePress() {
 
 function finishVoicePress() {
   if (!voicePressing) return;
+  const pressDuration = performance.now() - voicePressStartedAt;
   voicePressing = false;
   if (voiceTalkButton) voiceTalkButton.classList.remove("is-recording");
-  stopMicrophoneCapture();
+  stopMicrophoneCapture(pressDuration < 450);
+  if (pressDuration < 450 || voiceCapturedBytes < 960) {
+    pendingAudioChunks = [];
+    pendingAudioEnd = false;
+    if (voiceSentAudioBytes > 0 && voiceSocket?.readyState === WebSocket.OPEN) {
+      voiceSessionClosing = true;
+      voiceSocket.send(JSON.stringify({ type: "session.end" }));
+      voiceSocket.close();
+      voiceConnected = false;
+      voiceSessionReady = false;
+      voiceSessionInputMod = "";
+    }
+    setVoiceWaveLevel(0);
+    setVoiceUi("idle", "\u6309\u4f4f\u8bf4\u8bdd\uff0c\u677e\u5f00\u540e\u53d1\u9001", { force: true });
+    return;
+  }
   setVoiceUi("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u8bc6\u522b\u4f60\u7684\u95ee\u9898");
   scheduleVoiceIdle(9000, "\u6ca1\u6709\u8bc6\u522b\u5230\u65b0\u8bed\u97f3\uff0c\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
   pendingAudioEnd = true;
@@ -739,7 +786,7 @@ async function startMicrophoneCapture() {
   setVoiceWaveLevel(0.08);
 }
 
-function stopMicrophoneCapture() {
+function stopMicrophoneCapture(discardPending = false) {
   voiceRecording = false;
   if (voiceMicProcessor) {
     voiceMicProcessor.disconnect();
@@ -750,10 +797,11 @@ function stopMicrophoneCapture() {
     voiceMicSource.disconnect();
     voiceMicSource = null;
   }
-  if (voicePendingPcm.length) {
+  if (voicePendingPcm.length && !discardPending) {
     sendVoiceAudioChunk(floatToPcm16(voicePendingPcm).buffer);
     voicePendingPcm = new Float32Array(0);
   }
+  if (discardPending) voicePendingPcm = new Float32Array(0);
   setVoiceWaveLevel(0);
 }
 
@@ -1002,6 +1050,15 @@ if (voiceTalkButton) {
   voiceTalkButton.addEventListener("dragstart", (event) => event.preventDefault());
 }
 
+if (voiceVideo) {
+  voiceVideo.addEventListener("pause", () => {
+    const activeScreen = document.querySelector(".screen.active")?.dataset.screen;
+    if (activeScreen === "voice" && voiceVideo.loop && !voiceVideo.ended) {
+      window.setTimeout(() => voiceVideo.play().catch(() => {}), 80);
+    }
+  });
+}
+
 document.querySelectorAll("video").forEach((video) => {
   video.addEventListener("ended", () => {
     if (video.classList.contains("welcome-video")) return;
@@ -1023,6 +1080,7 @@ renderRoute(activeRoute);
 renderSpots();
 renderNearby();
 renderTrip();
+preloadVoiceVideos();
 
 const initialScreen = new URLSearchParams(window.location.search).get("screen");
 showScreen(screenVideoMap[initialScreen] ? initialScreen : "welcome");
