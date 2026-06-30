@@ -26,6 +26,8 @@ const wss = new WebSocketServer({ server, path: "/voice" });
 wss.on("connection", async (socket) => {
   let client = null;
   let mockClosed = false;
+  let upstreamReady = false;
+  let pendingUpstreamActions = [];
 
   const send = (event) => {
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event));
@@ -33,9 +35,25 @@ wss.on("connection", async (socket) => {
 
   send({ type: "bridge.ready", mock: MOCK_MODE });
 
+  const enqueueUpstream = (action) => {
+    if (upstreamReady) {
+      runUpstreamAction(action, send);
+      return;
+    }
+    pendingUpstreamActions.push(action);
+  };
+
+  const flushUpstream = () => {
+    if (!upstreamReady) return;
+    const actions = pendingUpstreamActions;
+    pendingUpstreamActions = [];
+    actions.forEach((action) => runUpstreamAction(action, send));
+  };
+
   socket.on("message", async (data, isBinary) => {
     if (isBinary) {
-      client?.sendAudio(data);
+      const chunk = Buffer.from(data);
+      if (client) enqueueUpstream(() => client.sendAudio(chunk));
       return;
     }
 
@@ -43,6 +61,8 @@ wss.on("connection", async (socket) => {
     if (!message) return;
 
     if (message.type === "session.start") {
+      upstreamReady = false;
+      pendingUpstreamActions = [];
       if (MOCK_MODE) {
         mockClosed = false;
         send({ type: "session.started", dialogId: "mock-dialog" });
@@ -60,7 +80,13 @@ wss.on("connection", async (socket) => {
         audio: (chunk) => {
           if (socket.readyState === WebSocket.OPEN) socket.send(chunk, { binary: true });
         },
-        event: send,
+        event: (event) => {
+          send(event);
+          if (event.type === "session.started") {
+            upstreamReady = true;
+            flushUpstream();
+          }
+        },
       });
       try {
         await client.connect();
@@ -73,7 +99,7 @@ wss.on("connection", async (socket) => {
       if (MOCK_MODE) {
         mockReply(send, message.content || "帮我安排半天苏州路线", () => mockClosed);
       } else {
-        client?.sendText(message.content || "");
+        if (client) enqueueUpstream(() => client.sendText(message.content || ""));
       }
     }
 
@@ -81,7 +107,7 @@ wss.on("connection", async (socket) => {
       if (MOCK_MODE) {
         mockReply(send, message.query || "讲讲拙政园", () => mockClosed);
       } else {
-        client?.sendRag(message.items || []);
+        if (client) enqueueUpstream(() => client.sendRag(message.items || []));
       }
     }
 
@@ -89,7 +115,7 @@ wss.on("connection", async (socket) => {
       if (MOCK_MODE) {
         mockReply(send, "帮我安排半天苏州路线", () => mockClosed);
       } else {
-        client?.endAudio();
+        if (client) enqueueUpstream(() => client.endAudio());
       }
     }
 
@@ -102,9 +128,19 @@ wss.on("connection", async (socket) => {
 
   socket.on("close", () => {
     mockClosed = true;
+    upstreamReady = false;
+    pendingUpstreamActions = [];
     client?.close();
   });
 });
+
+function runUpstreamAction(action, send) {
+  try {
+    action();
+  } catch (error) {
+    send({ type: "error", message: error.message || "语音桥接转发失败" });
+  }
+}
 
 server.listen(PORT, () => {
   console.log(`Su Liniang voice bridge listening on http://127.0.0.1:${PORT}`);

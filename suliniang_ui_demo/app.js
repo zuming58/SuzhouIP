@@ -24,6 +24,7 @@ const voiceAiText = document.querySelector("#voice-ai-text");
 const voiceBridgeMode = document.querySelector("#voice-bridge-mode");
 const voiceOrb = document.querySelector("#voice-orb");
 const voiceTalkButton = document.querySelector("[data-voice-talk]");
+const voiceWave = document.querySelector("#voice-wave");
 
 const content = window.SULINIANG_CONTENT;
 const videoBase = "../suliniang_project_materials/assets_3d_character_videos/normalized/";
@@ -372,6 +373,18 @@ function setVoiceBridgeBadge(text) {
   if (voiceBridgeMode) voiceBridgeMode.textContent = text;
 }
 
+function setVoiceWaveLevel(level = 0) {
+  if (!voiceWave) return;
+  const safe = Math.max(0, Math.min(1, level));
+  voiceWave.classList.toggle("is-active", voiceRecording || safe > 0.03);
+  const base = 0.45 + safe * 2.3;
+  voiceWave.style.setProperty("--wave-1", String(Math.max(0.35, base * 0.55)));
+  voiceWave.style.setProperty("--wave-2", String(Math.max(0.45, base * 0.85)));
+  voiceWave.style.setProperty("--wave-3", String(Math.max(0.55, base * 1.15)));
+  voiceWave.style.setProperty("--wave-4", String(Math.max(0.45, base * 0.78)));
+  voiceWave.style.setProperty("--wave-5", String(Math.max(0.35, base * 0.62)));
+}
+
 function connectVoiceBridge(inputMod = "text") {
   if (voiceSocket && voiceSocket.readyState <= WebSocket.OPEN && voiceSessionInputMod === inputMod) return;
   if (voiceSocket && voiceSocket.readyState <= WebSocket.OPEN && voiceSessionInputMod !== inputMod) {
@@ -575,12 +588,14 @@ async function startMicrophoneCapture() {
   voiceMicProcessor.onaudioprocess = (event) => {
     if (!voiceRecording) return;
     const input = event.inputBuffer.getChannelData(0);
+    setVoiceWaveLevel(getAudioLevel(input));
     const resampled = downsampleTo16k(input, voiceMicContext.sampleRate);
     queuePcmPackets(resampled);
   };
   voiceMicSource.connect(voiceMicProcessor);
   voiceMicProcessor.connect(voiceMicContext.destination);
   voiceRecording = true;
+  setVoiceWaveLevel(0.08);
 }
 
 function stopMicrophoneCapture() {
@@ -598,6 +613,14 @@ function stopMicrophoneCapture() {
     sendVoiceAudioChunk(floatToPcm16(voicePendingPcm).buffer);
     voicePendingPcm = new Float32Array(0);
   }
+  setVoiceWaveLevel(0);
+}
+
+function getAudioLevel(samples) {
+  if (!samples.length) return 0;
+  let sum = 0;
+  for (let index = 0; index < samples.length; index += 1) sum += samples[index] * samples[index];
+  return Math.min(1, Math.sqrt(sum / samples.length) * 7);
 }
 
 function downsampleTo16k(input, sourceSampleRate) {
@@ -827,6 +850,8 @@ if (voiceTalkButton) {
     stopMicrophoneCapture();
     setVoiceUi("idle", "\u5df2\u53d6\u6d88\u672c\u8f6e\u8bed\u97f3");
   });
+  voiceTalkButton.addEventListener("contextmenu", (event) => event.preventDefault());
+  voiceTalkButton.addEventListener("dragstart", (event) => event.preventDefault());
 }
 
 document.querySelectorAll("video").forEach((video) => {

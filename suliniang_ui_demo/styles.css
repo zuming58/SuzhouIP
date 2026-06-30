@@ -561,6 +561,7 @@ h1 {
 
 .voice-actions {
   display: grid;
+  gap: 9px;
   place-items: center;
 }
 
@@ -619,6 +620,50 @@ h1 {
   border: 4px solid rgba(255, 255, 255, 0.92);
   border-top: 0;
   border-radius: 0 0 22px 22px;
+}
+
+.voice-wave {
+  width: 118px;
+  height: 28px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: center;
+  gap: 7px;
+  opacity: 0.45;
+}
+
+.voice-wave span {
+  display: block;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(82, 161, 156, 0.9), rgba(55, 122, 115, 0.9));
+  transform: scaleY(0.45);
+  transform-origin: center;
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+
+.voice-wave.is-active {
+  opacity: 1;
+}
+
+.voice-wave.is-active span:nth-child(1) {
+  transform: scaleY(var(--wave-1, 0.7));
+}
+
+.voice-wave.is-active span:nth-child(2) {
+  transform: scaleY(var(--wave-2, 1.2));
+}
+
+.voice-wave.is-active span:nth-child(3) {
+  transform: scaleY(var(--wave-3, 1.8));
+}
+
+.voice-wave.is-active span:nth-child(4) {
+  transform: scaleY(var(--wave-4, 1.1));
+}
+
+.voice-wave.is-active span:nth-child(5) {
+  transform: scaleY(var(--wave-5, 0.8));
 }
 
 .screen-head {
