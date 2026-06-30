@@ -28,6 +28,9 @@ const voiceTalkButton = document.querySelector("[data-voice-talk]");
 const content = window.SULINIANG_CONTENT;
 const videoBase = "../suliniang_project_materials/assets_3d_character_videos/normalized/";
 const voiceBridgeUrl = window.SULINIANG_VOICE_BRIDGE_URL || "ws://127.0.0.1:8787/voice";
+const BrowserAudioContext = window.AudioContext || window.webkitAudioContext;
+const voiceTargetSampleRate = 16000;
+const voicePacketSamples = 320;
 let askAmbientTimer = null;
 let askActiveLayer = 0;
 let currentSpotId = content.defaultSpotId;
@@ -42,6 +45,15 @@ let voicePressing = false;
 let voiceSessionReady = false;
 let pendingVoiceQuery = "";
 let voiceSessionClosing = false;
+let voiceSessionInputMod = "";
+let voiceMediaStream = null;
+let voiceMicContext = null;
+let voiceMicSource = null;
+let voiceMicProcessor = null;
+let voiceRecording = false;
+let voicePendingPcm = new Float32Array(0);
+let pendingAudioChunks = [];
+let pendingAudioEnd = false;
 
 const screenVideoMap = {
   welcome: "welcome_once.mp4",
@@ -360,19 +372,32 @@ function setVoiceBridgeBadge(text) {
   if (voiceBridgeMode) voiceBridgeMode.textContent = text;
 }
 
-function connectVoiceBridge() {
-  if (voiceSocket && voiceSocket.readyState <= WebSocket.OPEN) return;
+function connectVoiceBridge(inputMod = "text") {
+  if (voiceSocket && voiceSocket.readyState <= WebSocket.OPEN && voiceSessionInputMod === inputMod) return;
+  if (voiceSocket && voiceSocket.readyState <= WebSocket.OPEN && voiceSessionInputMod !== inputMod) {
+    endVoiceSession();
+  }
 
   voiceSessionReady = false;
   voiceSessionClosing = false;
+  voiceSessionInputMod = inputMod;
+  pendingAudioChunks = [];
+  pendingAudioEnd = false;
   setVoiceBridgeBadge("\u8fde\u63a5\u4e2d");
   setVoiceUi("thinking", "\u6b63\u5728\u8fde\u63a5\u672c\u5730\u8bed\u97f3\u6865\u63a5\u5c42");
   voiceSocket = new WebSocket(voiceBridgeUrl);
+  const socket = voiceSocket;
   voiceSocket.binaryType = "arraybuffer";
 
   voiceSocket.addEventListener("open", () => {
     voiceConnected = true;
-    voiceSocket.send(JSON.stringify({ type: "session.start", inputMod: "text" }));
+    voiceSocket.send(
+      JSON.stringify({
+        type: "session.start",
+        inputAudioFormat: inputMod === "push_to_talk" ? "pcm_s16le" : undefined,
+        inputMod,
+      }),
+    );
   });
 
   voiceSocket.addEventListener("message", (event) => {
@@ -384,13 +409,16 @@ function connectVoiceBridge() {
   });
 
   voiceSocket.addEventListener("close", () => {
+    if (socket !== voiceSocket) return;
     voiceConnected = false;
     voiceSessionReady = false;
+    voiceSessionInputMod = "";
     setVoiceBridgeBadge("\u5df2\u65ad\u5f00");
     if (!voiceSessionClosing) setVoiceUi("idle", "\u8bed\u97f3\u6865\u63a5\u5c42\u5df2\u65ad\u5f00");
   });
 
   voiceSocket.addEventListener("error", () => {
+    if (socket !== voiceSocket) return;
     voiceConnected = false;
     voiceSessionReady = false;
     setVoiceBridgeBadge("\u672a\u8fde\u63a5");
@@ -409,12 +437,18 @@ function handleVoiceEvent(event) {
   if (event.type === "session.started") {
     voiceSessionReady = true;
     setVoiceUi("listening", "\u8bed\u97f3\u4f1a\u8bdd\u5df2\u5c31\u7eea\uff0c\u53ef\u4ee5\u5f00\u59cb\u63d0\u95ee");
+    flushPendingAudioChunks();
+    flushPendingAudioEnd();
     flushPendingVoiceQuery();
   }
   if (event.type === "asr.final") {
     if (voiceUserText) voiceUserText.textContent = event.text || "\u5df2\u6536\u5230\u8bed\u97f3\u95ee\u9898";
     if (questionInput && event.text) questionInput.value = event.text;
     setVoiceUi("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u601d\u8003");
+  }
+  if (event.type === "asr.partial") {
+    if (voiceUserText && event.text) voiceUserText.textContent = event.text;
+    setVoiceUi("listening", "\u6b63\u5728\u8bc6\u522b\u4f60\u7684\u8bed\u97f3");
   }
   if (event.type === "business.intent") {
     applyVoiceIntent(event.intent, event.params || {});
@@ -449,13 +483,36 @@ function flushPendingVoiceQuery() {
   voiceSocket.send(JSON.stringify({ type: "text.query", content: query }));
 }
 
+function sendVoiceAudioChunk(chunk) {
+  if (!chunk?.byteLength) return;
+  if (voiceSessionReady && voiceSocket?.readyState === WebSocket.OPEN) {
+    voiceSocket.send(chunk);
+    return;
+  }
+  pendingAudioChunks.push(chunk);
+  if (pendingAudioChunks.length > 80) pendingAudioChunks.shift();
+}
+
+function flushPendingAudioChunks() {
+  if (!voiceSessionReady || voiceSocket?.readyState !== WebSocket.OPEN) return;
+  while (pendingAudioChunks.length) {
+    voiceSocket.send(pendingAudioChunks.shift());
+  }
+}
+
+function flushPendingAudioEnd() {
+  if (!pendingAudioEnd || !voiceSessionReady || voiceSocket?.readyState !== WebSocket.OPEN) return;
+  pendingAudioEnd = false;
+  voiceSocket.send(JSON.stringify({ type: "audio.end" }));
+}
+
 function sendVoiceText(text) {
   const query = (text || questionInput?.value || content.quickQuestions[0]).trim();
   if (!query) return;
   if (voiceUserText) voiceUserText.textContent = query;
   if (voiceAiText) voiceAiText.textContent = "\u82cf\u4e3d\u5a18\u6b63\u5728\u7ec4\u7ec7\u56de\u7b54...";
   pendingVoiceQuery = query;
-  connectVoiceBridge();
+  connectVoiceBridge("text");
   flushPendingVoiceQuery();
 }
 
@@ -469,20 +526,117 @@ function endVoiceSession() {
   setVoiceUi("idle", "\u8bed\u97f3\u4f1a\u8bdd\u5df2\u7ed3\u675f");
 }
 
-function startVoicePress() {
+async function startVoicePress() {
   voicePressing = true;
-  connectVoiceBridge();
+  connectVoiceBridge("push_to_talk");
   if (voiceUserText) voiceUserText.textContent = "\u6b63\u5728\u542c\u4f60\u8bf4\u8bdd...";
-  if (voiceAiText) voiceAiText.textContent = "\u677e\u5f00\u540e\uff0c\u82cf\u4e3d\u5a18\u4f1a\u6574\u7406\u4f60\u7684\u95ee\u9898\u3002";
+  if (voiceAiText) voiceAiText.textContent = "\u677e\u5f00\u540e\uff0c\u82cf\u4e3d\u5a18\u4f1a\u5f00\u59cb\u56de\u7b54\u3002";
   setVoiceUi("listening", "\u6b63\u5728\u542c\uff0c\u677e\u5f00\u540e\u53d1\u9001");
+  try {
+    await startMicrophoneCapture();
+  } catch (error) {
+    voicePressing = false;
+    setVoiceUi("idle", error.message || "\u65e0\u6cd5\u6253\u5f00\u9ea6\u514b\u98ce");
+  }
 }
 
 function finishVoicePress() {
   if (!voicePressing) return;
   voicePressing = false;
   if (voiceTalkButton) voiceTalkButton.classList.remove("is-recording");
-  setVoiceUi("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u7406\u89e3\u4f60\u7684\u95ee\u9898");
-  sendVoiceText();
+  stopMicrophoneCapture();
+  setVoiceUi("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u8bc6\u522b\u4f60\u7684\u95ee\u9898");
+  pendingAudioEnd = true;
+  flushPendingAudioChunks();
+  flushPendingAudioEnd();
+}
+
+async function startMicrophoneCapture() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("\u5f53\u524d\u6d4f\u89c8\u5668\u4e0d\u652f\u6301\u9ea6\u514b\u98ce\u91c7\u96c6");
+  }
+  if (voiceRecording) return;
+
+  voiceMediaStream ||= await navigator.mediaDevices.getUserMedia({
+    audio: {
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  });
+  if (!BrowserAudioContext) throw new Error("\u5f53\u524d\u6d4f\u89c8\u5668\u4e0d\u652f\u6301 Web Audio");
+  voiceMicContext ||= new BrowserAudioContext();
+  if (voiceMicContext.state === "suspended") await voiceMicContext.resume();
+
+  voicePendingPcm = new Float32Array(0);
+  voiceMicSource = voiceMicContext.createMediaStreamSource(voiceMediaStream);
+  voiceMicProcessor = voiceMicContext.createScriptProcessor(4096, 1, 1);
+  voiceMicProcessor.onaudioprocess = (event) => {
+    if (!voiceRecording) return;
+    const input = event.inputBuffer.getChannelData(0);
+    const resampled = downsampleTo16k(input, voiceMicContext.sampleRate);
+    queuePcmPackets(resampled);
+  };
+  voiceMicSource.connect(voiceMicProcessor);
+  voiceMicProcessor.connect(voiceMicContext.destination);
+  voiceRecording = true;
+}
+
+function stopMicrophoneCapture() {
+  voiceRecording = false;
+  if (voiceMicProcessor) {
+    voiceMicProcessor.disconnect();
+    voiceMicProcessor.onaudioprocess = null;
+    voiceMicProcessor = null;
+  }
+  if (voiceMicSource) {
+    voiceMicSource.disconnect();
+    voiceMicSource = null;
+  }
+  if (voicePendingPcm.length) {
+    sendVoiceAudioChunk(floatToPcm16(voicePendingPcm).buffer);
+    voicePendingPcm = new Float32Array(0);
+  }
+}
+
+function downsampleTo16k(input, sourceSampleRate) {
+  if (sourceSampleRate === voiceTargetSampleRate) return new Float32Array(input);
+  const ratio = sourceSampleRate / voiceTargetSampleRate;
+  const outputLength = Math.floor(input.length / ratio);
+  const output = new Float32Array(outputLength);
+  for (let index = 0; index < outputLength; index += 1) {
+    const start = Math.floor(index * ratio);
+    const end = Math.min(Math.floor((index + 1) * ratio), input.length);
+    let sum = 0;
+    for (let cursor = start; cursor < end; cursor += 1) sum += input[cursor];
+    output[index] = sum / Math.max(1, end - start);
+  }
+  return output;
+}
+
+function queuePcmPackets(samples) {
+  if (!samples.length) return;
+  const merged = new Float32Array(voicePendingPcm.length + samples.length);
+  merged.set(voicePendingPcm);
+  merged.set(samples, voicePendingPcm.length);
+
+  let offset = 0;
+  while (offset + voicePacketSamples <= merged.length) {
+    const packet = merged.subarray(offset, offset + voicePacketSamples);
+    sendVoiceAudioChunk(floatToPcm16(packet).buffer);
+    offset += voicePacketSamples;
+  }
+  voicePendingPcm = merged.slice(offset);
+}
+
+function floatToPcm16(samples) {
+  const pcm = new Int16Array(samples.length);
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[index]));
+    pcm[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+  }
+  return pcm;
 }
 
 function applyVoiceIntent(intent, params) {
@@ -551,7 +705,8 @@ function renderNearbyResult(result) {
 function playPcmS16Le(arrayBuffer) {
   const samples = new Int16Array(arrayBuffer);
   if (!samples.length) return;
-  voiceAudioContext ||= new AudioContext({ sampleRate: 24000 });
+  if (!BrowserAudioContext) return;
+  voiceAudioContext ||= new BrowserAudioContext({ sampleRate: 24000 });
   const audioBuffer = voiceAudioContext.createBuffer(1, samples.length, 24000);
   const channel = audioBuffer.getChannelData(0);
   for (let index = 0; index < samples.length; index += 1) {
@@ -669,6 +824,7 @@ if (voiceTalkButton) {
   });
   voiceTalkButton.addEventListener("pointercancel", () => {
     voicePressing = false;
+    stopMicrophoneCapture();
     setVoiceUi("idle", "\u5df2\u53d6\u6d88\u672c\u8f6e\u8bed\u97f3");
   });
 }

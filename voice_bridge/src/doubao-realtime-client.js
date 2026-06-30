@@ -78,6 +78,10 @@ export class DoubaoRealtimeClient {
     this.ws?.send(encodeAudioEvent(Events.TASK_REQUEST, chunk, this.sessionId));
   }
 
+  endAudio() {
+    this.ws?.send(encodeJsonEvent(Events.END_ASR, {}, this.sessionId));
+  }
+
   close() {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(encodeJsonEvent(Events.FINISH_SESSION, {}, this.sessionId));
@@ -195,8 +199,18 @@ function translateEvent(type, payload, client) {
 
 function onceOpen(ws) {
   return new Promise((resolve, reject) => {
-    ws.once("open", resolve);
-    ws.once("error", reject);
+    const timeout = setTimeout(() => {
+      reject(new Error("Volcengine realtime WebSocket open timed out"));
+      ws.terminate();
+    }, 12000);
+    ws.once("open", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    ws.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
   });
 }
 
