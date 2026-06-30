@@ -414,9 +414,16 @@ function clearVoicePlaybackIdleTimer() {
 function scheduleVoiceIdle(delay = 2400, text = "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee") {
   clearVoiceIdleTimer();
   voiceIdleTimer = window.setTimeout(() => {
-    voiceResponseActive = false;
-    setVoiceUi("idle", text, { force: true });
+    forceVoiceIdle(text);
   }, delay);
+}
+
+function forceVoiceIdle(text = "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee") {
+  voiceResponseActive = false;
+  clearVoiceIdleTimer();
+  clearVoiceSpeakingFallbackTimer();
+  clearVoicePlaybackIdleTimer();
+  setVoiceUi("idle", text, { force: true });
 }
 
 function markVoiceSpeaking(text = "\u82cf\u4e3d\u5a18\u6b63\u5728\u64ad\u62a5") {
@@ -426,8 +433,7 @@ function markVoiceSpeaking(text = "\u82cf\u4e3d\u5a18\u6b63\u5728\u64ad\u62a5") 
   clearVoicePlaybackIdleTimer();
   setVoiceUi("speaking", text, { force: true });
   voiceSpeakingFallbackTimer = window.setTimeout(() => {
-    voiceResponseActive = false;
-    scheduleVoiceIdle(300, "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
+    forceVoiceIdle("\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
   }, 60000);
 }
 
@@ -435,11 +441,9 @@ function scheduleVoiceIdleAfterPlayback(text = "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u
   clearVoiceIdleTimer();
   clearVoicePlaybackIdleTimer();
   const now = voiceAudioContext?.currentTime || 0;
-  const remainingMs = Math.max(900, (voicePlaybackTime - now) * 1000 + 700);
+  const remainingMs = Math.min(12000, Math.max(700, (voicePlaybackTime - now) * 1000 + 600));
   voicePlaybackIdleTimer = window.setTimeout(() => {
-    voiceResponseActive = false;
-    clearVoiceSpeakingFallbackTimer();
-    setVoiceUi("idle", text, { force: true });
+    forceVoiceIdle(text);
   }, remainingMs);
 }
 
@@ -643,6 +647,7 @@ function handleVoiceEvent(event) {
     clearVoiceIdleTimer();
   }
   if (event.type === "tts.end") {
+    voiceResponseActive = false;
     clearVoiceSpeakingFallbackTimer();
     scheduleVoiceIdleAfterPlayback("\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
   }
