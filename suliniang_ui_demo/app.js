@@ -25,7 +25,7 @@ const voiceBridgeMode = document.querySelector("#voice-bridge-mode");
 const voiceOrb = document.querySelector("#voice-orb");
 const voiceTalkButton = document.querySelector("[data-voice-talk]");
 const voiceWave = document.querySelector("#voice-wave");
-const voiceVideo = document.querySelector(".voice-video");
+const voiceVideos = [...document.querySelectorAll(".voice-video")];
 
 const content = window.SULINIANG_CONTENT;
 const videoBase = "../suliniang_project_materials/assets_3d_character_videos/normalized/";
@@ -63,6 +63,9 @@ let voicePlaybackIdleTimer = null;
 let voicePressStartedAt = 0;
 let voiceCapturedBytes = 0;
 let voiceSentAudioBytes = 0;
+let activeVoiceVideoIndex = Math.max(0, voiceVideos.findIndex((video) => video.classList.contains("active")));
+let currentVoiceVideoName = "idle_loop.mp4";
+let pendingVoiceVideoName = "";
 
 const screenVideoMap = {
   welcome: "welcome_once.mp4",
@@ -470,23 +473,44 @@ function setVoiceUi(state, text, options = {}) {
 }
 
 function setVoiceVideo(videoName, mode = "idle") {
-  if (!voiceVideo) return;
+  if (!voiceVideos.length) return;
   const nextSrc = videoBase + videoName;
   if (voiceOrb) voiceOrb.dataset.video = mode;
-  voiceVideo.removeAttribute("poster");
-  if (!voiceVideo.src.endsWith(videoName)) {
-    voiceVideo.oncanplay = () => {
-      voiceVideo.oncanplay = null;
-      voiceVideo.play().catch(() => {});
-    };
-    voiceVideo.src = nextSrc;
-    voiceVideo.currentTime = 0;
-    voiceVideo.load();
-  } else if (voiceVideo.paused) {
-    voiceVideo.play().catch(() => {});
+  if (currentVoiceVideoName === videoName) {
+    voiceVideos[activeVoiceVideoIndex]?.play().catch(() => {});
+    return;
   }
-  voiceVideo.loop = true;
-  voiceVideo.play().catch(() => {});
+
+  const activeVideo = voiceVideos[activeVoiceVideoIndex];
+  const nextIndex = voiceVideos.length > 1 ? 1 - activeVoiceVideoIndex : activeVoiceVideoIndex;
+  const nextVideo = voiceVideos[nextIndex];
+  pendingVoiceVideoName = videoName;
+
+  const activate = () => {
+    if (pendingVoiceVideoName !== videoName) return;
+    nextVideo.oncanplay = null;
+    nextVideo.onloadeddata = null;
+    nextVideo.loop = true;
+    nextVideo.currentTime = 0;
+    nextVideo.play().catch(() => {});
+    nextVideo.classList.add("active");
+    if (activeVideo && activeVideo !== nextVideo) {
+      activeVideo.classList.remove("active");
+      activeVideo.pause();
+    }
+    activeVoiceVideoIndex = nextIndex;
+    currentVoiceVideoName = videoName;
+  };
+
+  nextVideo.oncanplay = activate;
+  nextVideo.onloadeddata = activate;
+  nextVideo.loop = true;
+  if (!nextVideo.src.endsWith(videoName)) {
+    nextVideo.src = nextSrc;
+    nextVideo.load();
+  } else {
+    activate();
+  }
 }
 
 function setVoiceBridgeBadge(text) {
@@ -1050,14 +1074,14 @@ if (voiceTalkButton) {
   voiceTalkButton.addEventListener("dragstart", (event) => event.preventDefault());
 }
 
-if (voiceVideo) {
-  voiceVideo.addEventListener("pause", () => {
+voiceVideos.forEach((video) => {
+  video.addEventListener("pause", () => {
     const activeScreen = document.querySelector(".screen.active")?.dataset.screen;
-    if (activeScreen === "voice" && voiceVideo.loop && !voiceVideo.ended) {
-      window.setTimeout(() => voiceVideo.play().catch(() => {}), 80);
+    if (activeScreen === "voice" && video.classList.contains("active") && video.loop && !video.ended) {
+      window.setTimeout(() => video.play().catch(() => {}), 80);
     }
   });
-}
+});
 
 document.querySelectorAll("video").forEach((video) => {
   video.addEventListener("ended", () => {
