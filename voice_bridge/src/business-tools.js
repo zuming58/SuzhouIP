@@ -121,6 +121,70 @@ export const businessData = {
   ],
 };
 
+// 苏州特色美食数据库
+const suzhouFoodDatabase = {
+  "平江路": [
+    { name: "桃花源记", specialty: "赤豆小圆子、酱方、松鼠桂鱼", type: "苏帮菜老字号" },
+    { name: "鱼食饭稻", specialty: "响油鳝糊、清炒河虾仁", type: "创意苏帮菜" },
+    { name: "潘玉麟糖粥", specialty: "桂花糖粥、小圆子", type: "网红小吃" },
+    { name: "皇城秘制鸡爪", specialty: "酱鸡爪、卤味", type: "街边小吃" },
+  ],
+  "观前街": [
+    { name: "得月楼", specialty: "松鼠桂鱼、响油鳝糊、苏式船点", type: "苏帮菜顶级老字号" },
+    { name: "松鹤楼", specialty: "松鼠桂鱼、碧螺虾仁、莼菜汤", type: "百年苏帮菜老字号" },
+    { name: "黄天源", specialty: "糕团、薄荷糕、玫瑰糕", type: "糕团老字号" },
+    { name: "陆长兴", specialty: "苏式汤面、爆鱼面、焖肉面", type: "面馆老字号" },
+  ],
+  "山塘街": [
+    { name: "大阿二生煎", specialty: "生煎包、蟹壳黄", type: "生煎老字号" },
+    { name: "赵元章肉骨烧", specialty: "酱排骨、肉骨头", type: "卤味老字号" },
+    { name: "荣阳楼", specialty: "油氽团子、汤包", type: "点心老字号" },
+  ],
+  "拙政园": [
+    { name: "平江路桃花源记", specialty: "赤豆小圆子、松鼠桂鱼", type: "步行5分钟可达" },
+    { name: "吴门人家", specialty: "苏州官府菜、糖粥", type: "步行10分钟可达" },
+  ],
+  "虎丘": [
+    { name: "虎丘山庄", specialty: "素面、苏帮菜", type: "景区内餐厅" },
+    { name: "山塘街大阿二生煎", specialty: "生煎包", type: "打车10分钟可达" },
+  ],
+  "苏州博物馆": [
+    { name: "平江路鱼食饭稻", specialty: "响油鳝糊", type: "步行8分钟可达" },
+    { name: "拙政园附近吴门人家", specialty: "官府菜", type: "步行10分钟可达" },
+  ],
+};
+
+// 根据位置推荐附近美食
+function recommendNearbyFood(area, timeOfDay = "lunch") {
+  const restaurants = suzhouFoodDatabase[area] || suzhouFoodDatabase["平江路"];
+  const selected = restaurants[Math.floor(Math.random() * restaurants.length)];
+  const mealLabel = timeOfDay === "dinner" ? "晚餐推荐" : "午餐推荐";
+  return {
+    title: `${mealLabel} · ${selected.name}`,
+    description: `${selected.type}，特色：${selected.specialty}`,
+    action: { label: "查看更多", screen: "nearby" },
+  };
+}
+
+// 解析时间字符串为分钟数，用于比较排序
+function parseTimeToMinutes(timeStr) {
+  const clean = timeStr.replace(/^D\d+\s*/, ""); // 去掉 D1 D2 前缀
+  const [hour, minute] = clean.split(":").map(Number);
+  return hour * 60 + (minute || 0);
+}
+
+// 判断某个时间点是否应该插入餐饮
+function shouldInsertMeal(nodeTime, lastMealTime, hasFoodPref) {
+  if (!hasFoodPref) return null;
+  const mins = parseTimeToMinutes(nodeTime);
+  const lastMins = lastMealTime ? parseTimeToMinutes(lastMealTime) : 0;
+  // 午餐窗口：11:30-13:00，且距离上一餐超过3小时
+  if (mins >= 690 && mins <= 780 && mins - lastMins > 180) return "lunch";
+  // 晚餐窗口：17:30-19:00，且距离上一餐超过4小时
+  if (mins >= 1050 && mins <= 1140 && mins - lastMins > 240) return "dinner";
+  return null;
+}
+
 export function generateRoute(params = {}) {
   const draft = params.draft || params;
   let destinations = normalizeDestinations(draft.destinations || []);
@@ -131,17 +195,48 @@ export function generateRoute(params = {}) {
 
   const timeSlots = buildTimeSlots(days, startTime, draft);
   const itineraryDestinations = expandDestinationsForDuration(destinations, days, prefs, draft);
-  const nodes = buildRouteNodes(itineraryDestinations, timeSlots, prefs, draft);
+  let nodes = buildRouteNodes(itineraryDestinations, timeSlots, prefs, draft);
 
-  // 放宽美食关键词匹配：用户说"吃""饭""小吃""午餐""晚餐"等都算
+  // 放宽美食关键词匹配
   const hasFoodPreference = prefs.some((p) => /美食|吃|小吃|饭|午餐|晚餐|吃饭|吃点|好吃|餐厅|饭馆/.test(p)) || draft.food;
-  if (hasFoodPreference && !nodes.some((node) => /平江路|观前街|美食|小吃/.test(node.title))) {
-    nodes.push({
-      time: days === "one_day" ? "12:30" : "12:00",
-      title: draft.foodArea || "平江路",
-      description: "接一段苏州小吃和江南街巷体验。",
-      action: { label: "查看推荐", screen: "nearby" },
-    });
+
+  if (hasFoodPreference) {
+    // 按时间智能插入午餐/晚餐节点，而不是简单加到最后
+    const finalNodes = [];
+    let lastMealTime = null;
+    const foodArea = draft.foodArea || destinations.find((d) => suzhouFoodDatabase[d]) || "平江路";
+
+    for (const node of nodes) {
+      // 检查这个节点之前是否应该插入餐饮
+      const mealType = shouldInsertMeal(node.time, lastMealTime, hasFoodPreference);
+      if (mealType) {
+        const foodNode = {
+          time: node.time,
+          ...recommendNearbyFood(foodArea, mealType),
+        };
+        finalNodes.push(foodNode);
+        lastMealTime = node.time;
+        // 把原景点时间往后推半小时
+        const nodeMins = parseTimeToMinutes(node.time);
+        const newMins = nodeMins + 60; // 吃饭留1小时
+        const newHour = Math.floor(newMins / 60);
+        const newMinute = newMins % 60;
+        node.time = `${String(newHour).padStart(2, "0")}:${String(newMinute).padStart(2, "0")}`;
+      }
+      finalNodes.push(node);
+    }
+
+    // 如果所有景点都太早，午餐还没机会插入，就加到中间
+    if (!lastMealTime && days !== "half_day") {
+      const midIndex = Math.floor(finalNodes.length / 2);
+      const foodNode = {
+        time: "12:00",
+        ...recommendNearbyFood(foodArea, "lunch"),
+      };
+      finalNodes.splice(midIndex, 0, foodNode);
+    }
+
+    nodes = finalNodes;
   }
 
   return {

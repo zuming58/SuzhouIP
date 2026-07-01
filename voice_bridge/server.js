@@ -161,7 +161,23 @@ wss.on("connection", async (socket) => {
       const action = message.action;
       if (message.draft) routeDraft = mergeDrafts(routeDraft, message.draft);
       if (action === "generate_route") {
-        const toolResult = generateRoute({ draft: routeDraft });
+        // 关键点：点生成路线时，用完整对话历史重新综合一次，保证和苏丽娘说的一致
+        // 不再用中间逐步提取的 draft，避免"卡片和口头回复不一致"
+        let finalDraft = routeDraft;
+        if (!MOCK_MODE && hasStateLlmConfig() && conversationTurns.length > 0) {
+          try {
+            const llmResult = await extractConversationState({
+              previousDraft: createEmptyRouteDraft(),
+              conversation: conversationTurns,
+              latestText: "[最终生成路线，综合所有对话历史]",
+            });
+            finalDraft = llmResult.draft;
+          } catch (e) {
+            // LLM 失败兜底，用现有 draft
+            console.warn("Final route synthesis failed, using accumulated draft:", e);
+          }
+        }
+        const toolResult = generateRoute({ draft: finalDraft, conversation: conversationTurns });
         send({ type: "tool.result", tool: "generate_route", result: toolResult });
         if (!MOCK_MODE && client) enqueueUpstream(() => client.sendText(buildVoiceReply("generate_route", toolResult)));
       }

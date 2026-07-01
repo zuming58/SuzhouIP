@@ -1286,6 +1286,11 @@ function renderNearbyResult(result) {
   }
 }
 
+// 全局音频播放状态追踪
+let voicePlaybackPollTimer = null;
+let voiceTotalChunks = 0;
+let voiceProcessedChunks = 0;
+
 function playPcmS16Le(arrayBuffer) {
   const samples = new Int16Array(arrayBuffer);
   if (!samples.length) return;
@@ -1303,7 +1308,61 @@ function playPcmS16Le(arrayBuffer) {
   const startAt = Math.max(voiceAudioContext.currentTime, voicePlaybackTime);
   source.start(startAt);
   voicePlaybackTime = startAt + audioBuffer.duration;
-  scheduleVoiceIdleAfterPlayback("\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
+  voiceTotalChunks += 1;
+
+  // 启动播放完成检测轮询（真检测，不靠猜时间）
+  startPlaybackEndPolling();
+}
+
+// 真正的音频播放完成检测：轮询 AudioContext 时间，直到真的播完
+function startPlaybackEndPolling() {
+  if (voicePlaybackPollTimer) return;
+  clearVoiceIdleTimer();
+  clearVoicePlaybackIdleTimer();
+
+  function checkFinished() {
+    if (!voiceAudioContext || !voiceConnected) {
+      forceVoiceIdle("对话已结束");
+      voicePlaybackPollTimer = null;
+      return;
+    }
+    const now = voiceAudioContext.currentTime;
+    const remaining = voicePlaybackTime - now;
+    // 真的播完了（剩余时间小于 0.2 秒，考虑音频尾部静音）
+    if (remaining < 0.2) {
+      // 再等 0.3 秒确认完全播完，避免"咔嗒"声时就切状态
+      setTimeout(() => {
+        if (voicePlaybackPollTimer) {
+          forceVoiceIdle("可以继续追问");
+          voicePlaybackPollTimer = null;
+          voiceTotalChunks = 0;
+        }
+      }, 300);
+      return;
+    }
+    // 还在播，继续轮询（每 100ms 检查一次）
+    voicePlaybackPollTimer = setTimeout(checkFinished, 100);
+  }
+  voicePlaybackPollTimer = setTimeout(checkFinished, 100);
+}
+
+// 停止音频播放时也要清除轮询定时器
+function stopAllVoicePlayback() {
+  if (voicePlaybackPollTimer) {
+    clearTimeout(voicePlaybackPollTimer);
+    voicePlaybackPollTimer = null;
+  }
+  voiceTotalChunks = 0;
+  if (voiceAudioContext) {
+    try {
+      voiceAudioContext.suspend();
+      voiceAudioContext.close();
+    } catch (e) {}
+    voiceAudioContext = null;
+  }
+  voicePlaybackTime = 0;
+  voiceResponseActive = false;
+  clearVoiceTimers();
 }
 
 document.addEventListener("click", (event) => {
