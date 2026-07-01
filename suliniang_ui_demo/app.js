@@ -14,22 +14,25 @@ const questionInput = document.querySelector("#question-input");
 const routeResult = document.querySelector("#route-result");
 const routeNote = document.querySelector("#route-note");
 const routePreferences = document.querySelector("#route-preferences");
+const routeDurationPill = document.querySelector('[data-screen="route"] .screen-head .pill');
 const nearbyFeature = document.querySelector("#nearby-feature");
 const nearbyList = document.querySelector("#nearby-list");
 const tripTimeline = document.querySelector("#trip-timeline");
 const quickQuestion = document.querySelector("[data-quick-question]");
-const voiceState = document.querySelector("#voice-state");
-const voiceUserText = document.querySelector("#voice-user-text");
-const voiceAiText = document.querySelector("#voice-ai-text");
-const voiceBridgeMode = document.querySelector("#voice-bridge-mode");
+const voicePushButton = document.querySelector("[data-voice-talk]");
+const voiceTextInput = document.getElementById("voice-text-input");
+const voiceSendBtn = document.getElementById("voice-send-btn");
+const voiceUserText = document.getElementById("voice-user-text");
+const voiceAiText = document.getElementById("voice-ai-text");
+const voiceState = document.getElementById("voice-state");
 const voiceOrb = document.querySelector("#voice-orb");
-const voiceTalkButton = document.querySelector("[data-voice-talk]");
 const voiceWave = document.querySelector("#voice-wave");
+const voiceBridgeMode = document.querySelector("#voice-bridge-mode");
 const voiceVideos = [...document.querySelectorAll(".voice-video")];
 
 const content = window.SULINIANG_CONTENT;
 const videoBase = "../suliniang_project_materials/assets_3d_character_videos/normalized/";
-const voiceBridgeUrl = window.SULINIANG_VOICE_BRIDGE_URL || "ws://127.0.0.1:8787/voice";
+const voiceBridgeUrl = window.SULINIANG_VOICE_BRIDGE_URL || "ws://127.0.0.1:8788/voice";
 const BrowserAudioContext = window.AudioContext || window.webkitAudioContext;
 const voiceTargetSampleRate = 16000;
 const voicePacketSamples = 320;
@@ -39,6 +42,10 @@ let currentSpotId = content.defaultSpotId;
 let activeRoute = content.routes[0];
 let tripItems = activeRoute.nodes.map((node) => ({ ...node, source: "route" }));
 let activeNearbyItems = content.nearby[0]?.items || [];
+let currentConversationDraft = null;
+let lastConversationSuggestion = null;
+let pendingRouteExecution = false;
+let savedItineraries = loadSavedItineraries();
 let voiceSocket = null;
 let voiceConnected = false;
 let voiceAudioContext = null;
@@ -70,6 +77,7 @@ let currentVoiceVideoName = "idle_loop.mp4";
 let pendingVoiceVideoName = "";
 let voiceVisualState = "idle";
 let voiceVideoTransitionId = 0;
+let voicePlaybackSuppressed = false;
 
 const screenVideoMap = {
   welcome: "welcome_once.mp4",
@@ -101,6 +109,18 @@ const voiceStateConfig = {
   thinking: { video: "thinking_loop.mp4", label: "\u6b63\u5728\u601d\u8003" },
   speaking: { video: "speaking_loop.mp4", label: "\u6b63\u5728\u56de\u5e94" },
 };
+
+function loadSavedItineraries() {
+  try {
+    return JSON.parse(localStorage.getItem("suliniang.savedItineraries") || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function persistSavedItineraries() {
+  localStorage.setItem("suliniang.savedItineraries", JSON.stringify(savedItineraries.slice(0, 20)));
+}
 
 function escapeHtml(value) {
   return String(value)
@@ -287,15 +307,20 @@ function generateRoute(preferences = getSelectedPreferences()) {
 
 function renderRoute(route) {
   if (!routeResult) return;
+  syncRouteMeta(route);
   if (routeNote) routeNote.textContent = route.note;
   routeResult.classList.add("visible");
   routeResult.innerHTML = `
     <p class="route-title">${escapeHtml(route.title)}</p>
+    <div class="route-toolbar">
+      <button data-save-itinerary>保存行程</button>
+      <button data-go="trip">历史/我的行程</button>
+    </div>
     ${route.nodes
       .map((node) => {
         const action = node.action || {};
         const attrs = action.screen
-          ? `data-go="${escapeHtml(action.screen)}"`
+          ? `data-go="${escapeHtml(action.screen)}"${action.spotTitle ? ` data-route-spot-title="${escapeHtml(action.spotTitle)}"` : ""}`
           : action.video
             ? `data-video="${escapeHtml(action.video)}" data-state="正在讲解"`
             : "";
@@ -312,6 +337,56 @@ function renderRoute(route) {
       })
       .join("")}
   `;
+}
+
+function syncRouteMeta(route) {
+  const labels = route?.preferences || [];
+  const duration = labels.find((label) => ["半天", "一天", "两天", "三天"].includes(label)) || durationLabelFromDraft(route?.draft?.days) || "路线";
+  if (routeDurationPill) routeDurationPill.textContent = duration;
+  if (routePreferences) {
+    routePreferences.innerHTML = labels
+      .map((label) => `<button class="selected" data-preference="${escapeHtml(label)}">${escapeHtml(label)}</button>`)
+      .join("");
+  }
+}
+
+function durationLabelFromDraft(days) {
+  if (!days) return "";
+  return formatDaysLabel(days);
+}
+
+function ensureRouteSpots(route) {
+  (route.nodes || []).forEach((node) => ensureSpotFromTitle(node.title, node.description));
+  renderSpots();
+}
+
+function ensureSpotFromTitle(title, description = "") {
+  const existing = content.spots.find((spot) => spot.name === title || title.includes(spot.name));
+  if (existing) return existing;
+  const id = `dynamic-${String(title).replace(/\s+/g, "-")}`;
+  const spot = {
+    id,
+    name: title,
+    x: "50%",
+    y: "50%",
+    summary: description || `${title}是本次路线中的定制讲解点。`,
+    story: buildDynamicSpotStory(title, description),
+  };
+  content.spots.push(spot);
+  return spot;
+}
+
+function buildDynamicSpotStory(title, description = "") {
+  if (title.includes("拙政园")) return "拙政园是苏州园林的代表。讲解时可以从水面、亭榭、窗景和诗意空间展开，再进入远香堂、与谁同坐轩、小飞虹等点位。";
+  if (title.includes("苏州博物馆")) return "苏州博物馆把传统园林的白墙灰瓦、水院光影，转译成现代建筑语言。这里适合讲苏州的古今相接。";
+  if (title.includes("平江路")) return "平江路沿河而行，保留了苏州古城的水巷肌理。这里适合边走边讲桥、河、老宅和苏式小吃。";
+  if (title.includes("虎丘")) return "虎丘是苏州历史记忆的重要地标，可以从虎丘塔、吴王传说和山水格局讲起。";
+  return `${title}是这次路线中的一站。${description || "后续可以根据游客兴趣，生成更诗意、更亲子或更专业的讲解版本。"}`;
+}
+
+function selectSpotByTitle(title) {
+  const spot = ensureSpotFromTitle(title);
+  return selectSpot(spot.id);
 }
 
 function selectSpot(id) {
@@ -342,7 +417,22 @@ function renderSpots() {
 function addToTrip(item) {
   const exists = tripItems.some((tripItem) => tripItem.title === item.title && tripItem.time === item.time);
   if (!exists) {
-    tripItems.push({ ...item, source: "nearby" });
+    const nextItem = { ...item, source: "nearby" };
+    tripItems.push(nextItem);
+    if (activeRoute && !activeRoute.nodes.some((node) => node.title === nextItem.title && node.time === nextItem.time)) {
+      activeRoute = {
+        ...activeRoute,
+        nodes: [...activeRoute.nodes, {
+          time: nextItem.time || "待定",
+          title: nextItem.title,
+          description: nextItem.description || "后续补充加入的行程节点。",
+          action: { label: "查看介绍", screen: "spot", spotTitle: nextItem.title },
+        }],
+        note: `${activeRoute.note || ""}；已补充：${nextItem.title}`,
+      };
+      ensureRouteSpots(activeRoute);
+      renderRoute(activeRoute);
+    }
   }
   renderTrip();
   setAvatar("smile_once.mp4", "\u5df2\u52a0\u5165\u884c\u7a0b");
@@ -376,17 +466,37 @@ function renderNearby() {
 
 function renderTrip() {
   if (!tripTimeline) return;
-  tripTimeline.innerHTML = tripItems
+  const currentHtml = tripItems
     .map(
       (item) => `
         <article class="${item.source === "nearby" ? "muted" : ""}">
-          <time>${escapeHtml(item.time)}</time>
+          <time>${escapeHtml(item.time || "待定")}</time>
           <h3>${escapeHtml(item.title)}</h3>
           <p>${escapeHtml(item.description)}</p>
         </article>
       `,
     )
     .join("");
+  const historyHtml = savedItineraries.length
+    ? `
+      <div class="history-block">
+        <p class="section-kicker">历史行程</p>
+        ${savedItineraries
+          .map(
+            (item) => `
+              <article class="history-item">
+                <time>${escapeHtml(item.createdAt)}</time>
+                <h3>${escapeHtml(item.title)}</h3>
+                <p>${escapeHtml(item.note || "已保存行程")}</p>
+                <button data-restore-itinerary="${escapeHtml(item.id)}">恢复行程</button>
+              </article>
+            `,
+          )
+          .join("")}
+      </div>
+    `
+    : `<div class="history-block"><p class="section-kicker">历史行程</p><p class="empty-history">还没有保存的行程。</p></div>`;
+  tripTimeline.innerHTML = `${currentHtml}${historyHtml}`;
 }
 
 function initQuickQuestion() {
@@ -457,9 +567,11 @@ function markVoiceSpeaking(text = "\u82cf\u4e3d\u5a18\u6b63\u5728\u64ad\u62a5") 
   clearVoicePlaybackIdleTimer();
   clearVoiceThinkingTimeoutTimer();
   requestVoiceState("speaking", text, { force: true });
+  // 兜底：90秒后强制停止，防止永远卡在说话状态
+  // 正常会在 chat.ended + tts.end 后自动调用 scheduleVoiceIdleAfterPlayback
   voiceSpeakingFallbackTimer = window.setTimeout(() => {
-    forceVoiceIdle("\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
-  }, 24000);
+    forceVoiceIdle("可以继续追问");
+  }, 90000);
 }
 
 function scheduleVoiceIdleAfterPlayback(text = "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee") {
@@ -474,26 +586,38 @@ function scheduleVoiceIdleAfterPlayback(text = "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u
 
 function requestVoiceState(state, text, options = {}) {
   if (!voiceStateConfig[state]) state = "idle";
-  if (voiceResponseActive && !options.force && state !== "speaking") {
+  // 状态优先级：speaking > listening > thinking > idle
+  const priority = { idle: 0, thinking: 1, listening: 2, speaking: 3 };
+  const currentPriority = priority[voiceVisualState] || 0;
+  const targetPriority = priority[state] || 0;
+  if (!options.force && targetPriority < currentPriority && voiceVisualState !== "idle") {
     return;
   }
-  voiceVisualState = state;
-  if (voiceState) voiceState.textContent = text;
-  if (voiceOrb) voiceOrb.dataset.state = state;
-  if (voiceTalkButton) {
-    voiceTalkButton.classList.toggle("is-recording", state === "listening" && voicePressing);
-  }
-  const config = voiceStateConfig[state];
-  setAvatar(config.video, config.label);
-  setVoiceVideo(config.video, state);
+  setVoiceAvatarState(state, text);
 }
 
-function setVoiceVideo(videoName, mode = "idle") {
+function setVoiceAvatarState(state, text) {
+  if (!voiceStateConfig[state]) state = "idle";
+  voiceVisualState = state;
+  if (voiceState) voiceState.textContent = text || voiceStateConfig[state].label;
+  if (voiceOrb) voiceOrb.dataset.state = state;
+  if (voicePushButton) {
+    voicePushButton.classList.toggle("is-recording", state === "listening" && voicePressing);
+  }
+  const config = voiceStateConfig[state];
+  // 语音页只控制小窗口视频，不干扰主页面大数字人
+  // 防止双重视频切换导致白屏或冲突
+  setVoiceVideoSimple(config.video);
+}
+
+function setVoiceVideoSimple(videoName) {
   if (!voiceVideos.length) return;
   const nextSrc = videoBase + videoName;
-  if (voiceOrb) voiceOrb.dataset.video = mode;
   if (currentVoiceVideoName === videoName) {
-    voiceVideos[activeVoiceVideoIndex]?.play().catch(() => {});
+    const activeVideo = voiceVideos[activeVoiceVideoIndex];
+    if (activeVideo && activeVideo.paused) {
+      activeVideo.play().catch(() => {});
+    }
     return;
   }
 
@@ -502,14 +626,11 @@ function setVoiceVideo(videoName, mode = "idle") {
   const nextIndex = voiceVideos.length > 1 ? 1 - activeVoiceVideoIndex : activeVoiceVideoIndex;
   const nextVideo = voiceVideos[nextIndex];
   pendingVoiceVideoName = videoName;
-  let started = false;
 
-  const activate = () => {
+  const doSwitch = () => {
     if (transitionId !== voiceVideoTransitionId || pendingVoiceVideoName !== videoName) return;
-    if (nextVideo.readyState < 2 || !nextVideo.videoWidth) return;
     nextVideo.oncanplay = null;
     nextVideo.onloadeddata = null;
-    nextVideo.onplaying = null;
     nextVideo.loop = true;
     nextVideo.classList.add("active");
     if (activeVideo && activeVideo !== nextVideo) {
@@ -520,31 +641,37 @@ function setVoiceVideo(videoName, mode = "idle") {
     currentVoiceVideoName = videoName;
   };
 
-  const startNextVideo = () => {
-    if (started || transitionId !== voiceVideoTransitionId) return;
-    started = true;
+  const tryPlay = () => {
     nextVideo.currentTime = 0;
-    nextVideo
-      .play()
-      .then(() => requestAnimationFrame(() => requestAnimationFrame(activate)))
-      .catch(() => {});
+    nextVideo.play()
+      .then(() => {
+        requestAnimationFrame(() => requestAnimationFrame(doSwitch));
+      })
+      .catch(() => {
+        // 播放失败时，直接切换（避免卡死）
+        doSwitch();
+      });
   };
 
-  nextVideo.oncanplay = startNextVideo;
-  nextVideo.onloadeddata = startNextVideo;
-  nextVideo.onplaying = activate;
   nextVideo.loop = true;
   nextVideo.muted = true;
   nextVideo.playsInline = true;
+
   if (!nextVideo.src.endsWith(videoName)) {
+    nextVideo.oncanplay = tryPlay;
+    nextVideo.onloadeddata = tryPlay;
     nextVideo.src = nextSrc;
     nextVideo.load();
   } else {
-    startNextVideo();
+    tryPlay();
   }
+
+  // 兜底：1秒后强制切换，防止白框
   window.setTimeout(() => {
-    if (transitionId === voiceVideoTransitionId && currentVoiceVideoName !== videoName) startNextVideo();
-  }, 500);
+    if (transitionId === voiceVideoTransitionId && currentVoiceVideoName !== videoName) {
+      doSwitch();
+    }
+  }, 1000);
 }
 
 function setVoiceBridgeBadge(text) {
@@ -597,6 +724,7 @@ function connectVoiceBridge(inputMod = "text") {
 
   voiceSocket.addEventListener("message", (event) => {
     if (typeof event.data !== "string") {
+      if (voicePlaybackSuppressed) return;
       markVoiceSpeaking("\u82cf\u4e3d\u5a18\u6b63\u5728\u64ad\u62a5");
       playPcmS16Le(event.data);
       return;
@@ -650,11 +778,14 @@ function handleVoiceEvent(event) {
     flushPendingVoiceQuery();
   }
   if (event.type === "asr.final") {
-    if (voiceUserText) voiceUserText.textContent = event.text || "\u5df2\u6536\u5230\u8bed\u97f3\u95ee\u9898";
+    voicePlaybackSuppressed = false;
+    if (voiceUserText) voiceUserText.textContent = event.text || "已收到语音问题";
     if (questionInput && event.text) questionInput.value = event.text;
+    // 清空上一轮 AI 回复，准备接收新回答
+    if (voiceAiText) voiceAiText.textContent = "";
     voiceResponseActive = false;
-    requestVoiceState("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u601d\u8003");
-    scheduleVoiceIdle(7000, "\u6ca1\u6709\u6536\u5230\u56de\u7b54\uff0c\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
+    requestVoiceState("thinking", "苏丽娘正在思考", { force: true });
+    scheduleVoiceIdle(7000, "没有收到回答，可以继续追问");
   }
   if (event.type === "asr.partial") {
     if (voiceUserText && event.text) voiceUserText.textContent = event.text;
@@ -663,12 +794,21 @@ function handleVoiceEvent(event) {
   if (event.type === "business.intent") {
     applyVoiceIntent(event.intent, event.params || {});
   }
+  if (event.type === "conversation.suggestion") {
+    renderConversationSuggestion(event.suggestion);
+  }
   if (event.type === "tool.result") {
     applyVoiceToolResult(event.tool, event.result);
   }
   if (event.type === "chat.partial") {
+    if (voicePlaybackSuppressed) return;
     if (voiceAiText) voiceAiText.textContent = event.fullText || event.text || "";
-    markVoiceSpeaking("\u82cf\u4e3d\u5a18\u6b63\u5728\u56de\u7b54");
+    // 自动滚动到底部
+    const transcriptContainer = voiceAiText?.closest(".voice-transcript");
+    if (transcriptContainer) {
+      transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+    }
+    markVoiceSpeaking("苏丽娘正在回答");
   }
   if (event.type === "tts.start") {
     markVoiceSpeaking("\u82cf\u4e3d\u5a18\u6b63\u5728\u64ad\u62a5");
@@ -700,9 +840,10 @@ function flushPendingVoiceQuery() {
   clearVoiceIdleTimer();
   clearVoiceSpeakingFallbackTimer();
   clearVoicePlaybackIdleTimer();
+  clearVoiceThinkingTimeoutTimer();
   voicePlaybackTime = voiceAudioContext?.currentTime || 0;
   voiceAudioContext?.resume?.().catch(() => {});
-  requestVoiceState("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u7406\u89e3\u4f60\u7684\u95ee\u9898");
+  requestVoiceState("thinking", "苏丽娘正在理解你的问题");
   voiceSocket.send(JSON.stringify({ type: "text.query", content: query }));
 }
 
@@ -734,6 +875,7 @@ function flushPendingAudioEnd() {
 }
 
 function sendVoiceText(text) {
+  voicePlaybackSuppressed = false;
   const query = (text || questionInput?.value || content.quickQuestions[0]).trim();
   if (!query) return;
   if (voiceUserText) voiceUserText.textContent = query;
@@ -758,31 +900,50 @@ function endVoiceSession() {
 }
 
 async function startVoicePress() {
+  voicePlaybackSuppressed = false;
   if (voicePressing) return;
   voicePressing = true;
   voicePressStartedAt = performance.now();
   voiceCapturedBytes = 0;
   voiceSentAudioBytes = 0;
   voiceResponseActive = false;
+
+  // 立即停止所有正在播放的音频并重置状态
+  stopAllVoicePlayback();
   clearVoiceTimers();
-  if (voiceTalkButton) voiceTalkButton.classList.add("is-recording");
+
+  if (voicePushButton) voicePushButton.classList.add("is-recording");
   setVoiceWaveLevel(0.12);
   connectVoiceBridge("push_to_talk");
-  if (voiceUserText) voiceUserText.textContent = "\u6b63\u5728\u542c\u4f60\u8bf4\u8bdd...";
-  if (voiceAiText) voiceAiText.textContent = "\u677e\u5f00\u540e\uff0c\u82cf\u4e3d\u5a18\u4f1a\u5f00\u59cb\u56de\u7b54\u3002";
-  if (voiceState) voiceState.textContent = "\u6b63\u5728\u542c\uff0c\u677e\u5f00\u540e\u53d1\u9001";
+  if (voiceUserText) voiceUserText.textContent = "正在听你说话...";
+  if (voiceAiText) voiceAiText.textContent = "松开后，苏丽娘会开始回答。";
+  if (voiceState) voiceState.textContent = "正在听，松开后发送";
   voicePressConfirmTimer = window.setTimeout(() => {
-    if (voicePressing) requestVoiceState("listening", "\u6b63\u5728\u542c\uff0c\u677e\u5f00\u540e\u53d1\u9001", { force: true });
+    if (voicePressing) requestVoiceState("listening", "正在听，松开后发送", { force: true });
   }, 180);
   try {
     await startMicrophoneCapture();
   } catch (error) {
     voicePressing = false;
     clearVoicePressConfirmTimer();
-    if (voiceTalkButton) voiceTalkButton.classList.remove("is-recording");
+    if (voicePushButton) voicePushButton.classList.remove("is-recording");
     setVoiceWaveLevel(0);
-    requestVoiceState("idle", error.message || "\u65e0\u6cd5\u6253\u5f00\u9ea6\u514b\u98ce", { force: true });
+    requestVoiceState("idle", error.message || "无法打开麦克风", { force: true });
   }
+}
+
+function stopAllVoicePlayback() {
+  // 停止所有正在播放的音频
+  if (voiceAudioContext) {
+    try {
+      voiceAudioContext.suspend();
+      voiceAudioContext.close();
+    } catch (e) {}
+    voiceAudioContext = null;
+  }
+  voicePlaybackTime = 0;
+  voiceResponseActive = false;
+  clearVoiceTimers();
 }
 
 function finishVoicePress() {
@@ -790,7 +951,7 @@ function finishVoicePress() {
   const pressDuration = performance.now() - voicePressStartedAt;
   voicePressing = false;
   clearVoicePressConfirmTimer();
-  if (voiceTalkButton) voiceTalkButton.classList.remove("is-recording");
+  if (voicePushButton) voicePushButton.classList.remove("is-recording");
   stopMicrophoneCapture(pressDuration < 450);
   if (pressDuration < 450 || voiceCapturedBytes < 960) {
     pendingAudioChunks = [];
@@ -804,12 +965,14 @@ function finishVoicePress() {
       voiceSessionInputMod = "";
     }
     setVoiceWaveLevel(0);
-    requestVoiceState("idle", "\u6309\u4f4f\u8bf4\u8bdd\uff0c\u677e\u5f00\u540e\u53d1\u9001", { force: true });
+    requestVoiceState("idle", "按住说话，松开后发送", { force: true });
     return;
   }
-  requestVoiceState("thinking", "\u82cf\u4e3d\u5a18\u6b63\u5728\u8bc6\u522b\u4f60\u7684\u95ee\u9898");
+  // 有效提问，清空上一轮 AI 回复，准备接收新回答
+  if (voiceAiText) voiceAiText.textContent = "";
+  requestVoiceState("thinking", "苏丽娘正在识别你的问题");
   voiceThinkingTimeoutTimer = window.setTimeout(() => {
-    forceVoiceIdle("\u6ca1\u6709\u8bc6\u522b\u5230\u65b0\u8bed\u97f3\uff0c\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee");
+    forceVoiceIdle("没有识别到新语音，可以继续追问");
   }, 10000);
   pendingAudioEnd = true;
   flushPendingAudioChunks();
@@ -915,14 +1078,115 @@ function floatToPcm16(samples) {
   return pcm;
 }
 
+function renderConversationSuggestion(suggestion) {
+  if (!suggestion || !voiceAiText) return;
+  lastConversationSuggestion = suggestion;
+  currentConversationDraft = suggestion.draft || currentConversationDraft;
+  const container = voiceAiText.closest(".voice-transcript");
+  if (!container) return;
+  container.querySelector(".voice-suggestion-card")?.remove();
+  const draft = suggestion.draft || {};
+  const lines = [
+    draft.destinations?.length ? `想去：${draft.destinations.join("、")}` : "路线：苏州经典路线",
+    draft.days ? `时长：${formatDaysLabel(draft.days)}` : "时长：待补充",
+    draft.startTime ? `时间：${draft.startTime}` : "时间：待补充",
+    draft.people ? `同行：${draft.people}` : "同行：待补充",
+    draft.prefs?.length ? `偏好：${draft.prefs.join("、")}` : "偏好：待补充",
+  ];
+  const card = document.createElement("div");
+  card.className = `voice-suggestion-card ${suggestion.kind === "route_ready" ? "is-ready" : ""}`;
+  card.innerHTML = `
+    <p class="suggestion-title">${escapeHtml(suggestion.text || "我已经帮你记下来了")}</p>
+    <ul>${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>
+    <div class="suggestion-actions">
+      ${(suggestion.actions || [])
+        .map((action) => `<button class="${action.primary ? "primary-action" : ""}" data-suggestion-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`)
+        .join("")}
+    </div>
+  `;
+  container.appendChild(card);
+  container.scrollTop = container.scrollHeight;
+}
+
+function clearConversationSuggestion() {
+  lastConversationSuggestion = null;
+  document.querySelector(".voice-suggestion-card")?.remove();
+}
+
+function formatDaysLabel(days) {
+  return days === "three_day" ? "三天" : days === "two_day" ? "两天" : days === "one_day" ? "一天" : "半天";
+}
+
+function interruptVoicePlayback(reason = "正在执行你的操作") {
+  voicePlaybackSuppressed = true;
+  stopAllVoicePlayback();
+  pendingVoiceQuery = "";
+  pendingAudioChunks = [];
+  pendingAudioEnd = false;
+  requestVoiceState("thinking", reason, { force: true });
+}
+
+function executeSuggestionAction(action) {
+  if (!action) return;
+  if (action === "continue") {
+    clearConversationSuggestion();
+    requestVoiceState("idle", "可以继续补充你的想法", { force: true });
+    return;
+  }
+  if (action === "generate_route") {
+    pendingRouteExecution = true;
+    interruptVoicePlayback("正在生成路线");
+  }
+  if (action === "nearby_food") {
+    interruptVoicePlayback("正在查找附近美食");
+  }
+  if (voiceSocket?.readyState === WebSocket.OPEN) {
+    voiceSocket.send(JSON.stringify({ type: "action.execute", action, draft: currentConversationDraft || undefined }));
+  } else {
+    connectVoiceBridge("text");
+    window.setTimeout(() => {
+      if (voiceSocket?.readyState === WebSocket.OPEN) voiceSocket.send(JSON.stringify({ type: "action.execute", action, draft: currentConversationDraft || undefined }));
+    }, 400);
+  }
+}
+
+function saveActiveItinerary() {
+  if (!activeRoute) return;
+  const item = {
+    id: `itinerary-${Date.now()}`,
+    title: activeRoute.title,
+    createdAt: new Date().toLocaleString("zh-CN"),
+    note: activeRoute.note,
+    route: activeRoute,
+    tripItems,
+  };
+  savedItineraries.unshift(item);
+  persistSavedItineraries();
+  renderTrip();
+  requestVoiceState("idle", "行程已保存，可以在我的行程查看", { force: true });
+}
+
+function restoreItinerary(id) {
+  const item = savedItineraries.find((entry) => entry.id === id);
+  if (!item) return;
+  activeRoute = item.route;
+  tripItems = item.tripItems || item.route.nodes || [];
+  renderRoute(activeRoute);
+  renderTrip();
+  showScreen("route");
+}
+
 function applyVoiceIntent(intent, params) {
   const labelMap = {
-    generate_route: "正在查询适合你的苏州路线",
+    generate_route: "正在为你规划路线",
+    finalize_route: "正在生成定制路线",
+    route_ready: "可以生成候选路线",
+    route_collect: "正在记录你的出行需求",
     spot_explain: "正在整理景点讲解",
     nearby_recommend: "正在查找附近推荐",
-    smalltalk: "\u82cf\u4e3d\u5a18\u6b63\u5728\u56de\u5e94",
+    smalltalk: "苏丽娘正在回答",
   };
-  requestVoiceState("thinking", labelMap[intent] || "\u82cf\u4e3d\u5a18\u6b63\u5728\u7406\u89e3\u4f60\u7684\u9700\u6c42");
+  requestVoiceState("thinking", labelMap[intent] || "苏丽娘正在理解你的需求", { force: true });
 
   if (intent === "spot_explain" && params.spot) {
     const matched = content.spots.find((spot) => spot.name === params.spot);
@@ -933,21 +1197,55 @@ function applyVoiceIntent(intent, params) {
 function applyVoiceToolResult(tool, result) {
   if (!result) return;
 
-  if (tool === "generate_route") {
+  if (tool === "generate_route" || tool === "finalize_route") {
     activeRoute = result;
     tripItems = result.nodes.map((node) => ({ ...node, source: "route" }));
+    ensureRouteSpots(result);
     renderRoute(result);
     renderTrip();
+    if (pendingRouteExecution) {
+      pendingRouteExecution = false;
+      clearConversationSuggestion();
+      requestVoiceState("idle", "路线已生成，可以查看定制路线", { force: true });
+      setTimeout(() => showScreen("route"), 120);
+    }
   }
 
   if (tool === "spot_explain") {
     const matched = content.spots.find((spot) => spot.name === result.spot);
     if (matched) selectSpot(matched.id);
     if (spotStory && result.text) spotStory.textContent = result.text;
+    // 语音对话期间不自动跳景点页，避免反复抢到“与谁同坐轩”。
+    // 只更新讲解数据，用户需要时再手动点进导览/景点页。
   }
 
   if (tool === "nearby_recommend") {
-    renderNearbyResult(result);
+    activeNearbyItems = result.items || [];
+    if (nearbyFeature) {
+      const nearbySummary = result.location
+        ? `建议前往${result.location}，适合接在当前行程后。`
+        : "根据当前位置推荐。";
+      nearbyFeature.innerHTML = `
+        <p class="section-kicker">附近推荐</p>
+        <h3>${escapeHtml(result.title || "苏州附近推荐")}</h3>
+        <p>${escapeHtml(nearbySummary)}</p>
+      `;
+    }
+    if (nearbyList) {
+      nearbyList.innerHTML = (result.items || [])
+        .map(
+          (item, index) => `
+            <article>
+              <span>${escapeHtml(item.title)}</span>
+              <p>${escapeHtml(item.description)}</p>
+              <button data-add-nearby="${index}">加入行程</button>
+            </article>
+          `,
+        )
+        .join("");
+    }
+    // 语音对话期间不自动跳附近页，避免问答被打断。
+    // 附近推荐结果已写入页面数据，用户可手动进入附近页查看。
   }
 }
 
@@ -999,6 +1297,20 @@ function playPcmS16Le(arrayBuffer) {
 }
 
 document.addEventListener("click", (event) => {
+  const suggestionAction = event.target.closest("[data-suggestion-action]");
+  if (suggestionAction) {
+    executeSuggestionAction(suggestionAction.dataset.suggestionAction);
+  }
+
+  if (event.target.closest("[data-save-itinerary]")) {
+    saveActiveItinerary();
+  }
+
+  const restoreItineraryButton = event.target.closest("[data-restore-itinerary]");
+  if (restoreItineraryButton) {
+    restoreItinerary(restoreItineraryButton.dataset.restoreItinerary);
+  }
+
   const spotButton = event.target.closest("[data-spot]");
   if (spotButton) {
     selectSpot(spotButton.dataset.spot);
@@ -1051,7 +1363,8 @@ document.addEventListener("click", (event) => {
 
   const go = event.target.closest("[data-go]");
   if (go) {
-    if (go.dataset.go === "spot") selectSpot(currentSpotId);
+    if (go.dataset.routeSpotTitle) selectSpotByTitle(go.dataset.routeSpotTitle);
+    else if (go.dataset.go === "spot") selectSpot(currentSpotId);
     showScreen(go.dataset.go);
     if (go.dataset.go === "voice") connectVoiceBridge();
   }
@@ -1067,7 +1380,33 @@ document.addEventListener("click", (event) => {
 
   const videoTrigger = event.target.closest("[data-video]");
   if (videoTrigger) {
-    setAvatar(videoTrigger.dataset.video, videoTrigger.dataset.state);
+    const activeScreen = document.querySelector(".screen.active")?.dataset.screen;
+    const stateName = videoTrigger.dataset.video;
+    // 映射状态名到完整视频名
+    const stateToVideo = {
+      idle: "idle_loop.mp4",
+      listen: "listening_loop.mp4",
+      think: "thinking_loop.mp4",
+      speak: "speaking_loop.mp4",
+      guide: "guide_once.mp4",
+      smile: "smile_once.mp4",
+    };
+    const videoName = stateToVideo[stateName] || "idle_loop.mp4";
+
+    if (activeScreen === "voice") {
+      // 在语音页，控制语音小窗口
+      const stateMap = {
+        "idle_loop.mp4": "idle",
+        "listening_loop.mp4": "listening",
+        "thinking_loop.mp4": "thinking",
+        "speaking_loop.mp4": "speaking",
+      };
+      const state = stateMap[videoName] || "idle";
+      setVoiceAvatarState(state, videoTrigger.dataset.state || voiceStateConfig[state].label);
+    } else {
+      // 其他页面，控制全局数字人
+      setAvatar(videoName, videoTrigger.dataset.state);
+    }
   }
 
   if (event.target.closest("[data-demo-speaking]")) {
@@ -1089,29 +1428,52 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-if (voiceTalkButton) {
-  voiceTalkButton.addEventListener("pointerdown", (event) => {
+if (voicePushButton) {
+  voicePushButton.addEventListener("pointerdown", (event) => {
     event.preventDefault();
-    voiceTalkButton.setPointerCapture(event.pointerId);
+    voicePushButton.setPointerCapture(event.pointerId);
     startVoicePress();
   });
-  voiceTalkButton.addEventListener("pointerup", (event) => {
+  voicePushButton.addEventListener("pointerup", (event) => {
     event.preventDefault();
-    if (voiceTalkButton.hasPointerCapture?.(event.pointerId)) {
-      voiceTalkButton.releasePointerCapture(event.pointerId);
+    if (voicePushButton.hasPointerCapture?.(event.pointerId)) {
+      voicePushButton.releasePointerCapture(event.pointerId);
     }
     finishVoicePress();
   });
-  voiceTalkButton.addEventListener("pointercancel", () => {
+  voicePushButton.addEventListener("pointercancel", () => {
     voicePressing = false;
-    if (voiceTalkButton) voiceTalkButton.classList.remove("is-recording");
+    if (voicePushButton) voicePushButton.classList.remove("is-recording");
     clearVoiceIdleTimer();
     clearVoicePlaybackIdleTimer();
     stopMicrophoneCapture();
     requestVoiceState("idle", "\u5df2\u53d6\u6d88\u672c\u8f6e\u8bed\u97f3");
   });
-  voiceTalkButton.addEventListener("contextmenu", (event) => event.preventDefault());
-  voiceTalkButton.addEventListener("dragstart", (event) => event.preventDefault());
+  voicePushButton.addEventListener("contextmenu", (event) => event.preventDefault());
+  voicePushButton.addEventListener("dragstart", (event) => event.preventDefault());
+}
+
+// 文字发送事件
+if (voiceSendBtn) {
+  voiceSendBtn.addEventListener("click", () => {
+    const text = voiceTextInput?.value.trim();
+    if (text) {
+      sendVoiceText(text);
+      if (voiceTextInput) voiceTextInput.value = "";
+    }
+  });
+}
+
+if (voiceTextInput) {
+  voiceTextInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      const text = voiceTextInput.value.trim();
+      if (text) {
+        sendVoiceText(text);
+        voiceTextInput.value = "";
+      }
+    }
+  });
 }
 
 voiceVideos.forEach((video) => {

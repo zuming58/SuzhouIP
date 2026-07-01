@@ -2,10 +2,14 @@ import { config as loadEnv } from "dotenv";
 import http from "node:http";
 import WebSocket, { WebSocketServer } from "ws";
 import { DoubaoRealtimeClient } from "./src/doubao-realtime-client.js";
+import { classifyMockIntent, buildMockToolResult, buildMockReply } from "./src/intent-classifier.js";
+import { generateRoute, explainSpot, recommendNearby, buildVoiceReply } from "./src/business-tools.js";
+import { extractConversationState, mergeDrafts, hasStateLlmConfig } from "./src/conversation-state-extractor.js";
+import { isRouteRelated } from "./src/suzhou-lexicon.js";
 
 loadEnv({ override: true });
 
-const PORT = Number(process.env.PORT || 8787);
+const PORT = Number(process.env.PORT || 8788);
 const MOCK_MODE = process.env.MOCK_MODE !== "0" || !process.env.VOLC_ACCESS_KEY;
 
 const server = http.createServer((req, res) => {
@@ -14,6 +18,7 @@ const server = http.createServer((req, res) => {
       ok: true,
       mock: MOCK_MODE,
       volcReady: Boolean(process.env.VOLC_ACCESS_KEY),
+      stateLlmReady: hasStateLlmConfig(),
       model: process.env.VOLC_MODEL || "1.2.1.1",
     });
     return;
@@ -28,6 +33,10 @@ wss.on("connection", async (socket) => {
   let mockClosed = false;
   let upstreamReady = false;
   let pendingUpstreamActions = [];
+  let currentQuery = "";
+  let lastProcessedQuery = "";
+  let conversationTurns = [];
+  let routeDraft = createEmptyRouteDraft();
 
   const send = (event) => {
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event));
@@ -50,6 +59,42 @@ wss.on("connection", async (socket) => {
     actions.forEach((action) => runUpstreamAction(action, send));
   };
 
+  const processIntent = async (text) => {
+    const normalizedText = String(text || "").trim();
+    if (!normalizedText || normalizedText === lastProcessedQuery) return;
+    lastProcessedQuery = normalizedText;
+
+    const intent = classifyMockIntent(normalizedText);
+    conversationTurns.push({ role: "user", content: normalizedText });
+    const state = await extractConversationState({ previousDraft: routeDraft, conversation: conversationTurns, latestText: normalizedText });
+    routeDraft = state.draft || routeDraft;
+    const isRoute = intent.name === "route_collect" || intent.name === "route_ready" || isRouteRelated(normalizedText) || routeDraft.allowClassicRoute || routeDraft.destinations.length || routeDraft.days;
+    const finalIntent = isRoute ? (routeDraft.acceptedSuggestedRoute ? "route_ready" : "route_collect") : intent.name;
+    send({
+      type: "business.intent",
+      intent: finalIntent,
+      confidence: state.source === "llm" ? 0.95 : intent.confidence,
+      params: { ...intent.params, draft: routeDraft, stateSource: state.source },
+    });
+    if (state.error) send({ type: "debug.state_extractor", source: state.source, error: state.error });
+
+    let upstreamText = normalizedText;
+    if (finalIntent === "route_collect" || finalIntent === "route_ready") {
+      send({ type: "conversation.suggestion", suggestion: buildConversationSuggestion(routeDraft, finalIntent) });
+      upstreamText = buildRouteCollectReply(routeDraft);
+    } else if (finalIntent !== "smalltalk") {
+      const toolResult = await callTool({ ...intent, name: finalIntent, draft: routeDraft });
+      if (toolResult) {
+        send({ type: "tool.result", tool: finalIntent, result: toolResult });
+        upstreamText = buildVoiceReply(finalIntent, toolResult) || normalizedText;
+      }
+    }
+
+    if (!MOCK_MODE && client && upstreamText) {
+      enqueueUpstream(() => client.sendText(upstreamText));
+    }
+  };
+
   socket.on("message", async (data, isBinary) => {
     if (isBinary) {
       const chunk = Buffer.from(data);
@@ -63,6 +108,10 @@ wss.on("connection", async (socket) => {
     if (message.type === "session.start") {
       upstreamReady = false;
       pendingUpstreamActions = [];
+      lastProcessedQuery = "";
+      currentQuery = "";
+      conversationTurns = [];
+      routeDraft = createEmptyRouteDraft();
       if (MOCK_MODE) {
         mockClosed = false;
         send({ type: "session.started", dialogId: "mock-dialog" });
@@ -81,6 +130,10 @@ wss.on("connection", async (socket) => {
           if (socket.readyState === WebSocket.OPEN) socket.send(chunk, { binary: true });
         },
         event: (event) => {
+          if (event.type === "asr.final" && event.text) {
+            currentQuery = event.text;
+            processIntent(event.text);
+          }
           send(event);
           if (event.type === "session.started") {
             upstreamReady = true;
@@ -99,7 +152,23 @@ wss.on("connection", async (socket) => {
       if (MOCK_MODE) {
         mockReply(send, message.content || "帮我安排半天苏州路线", () => mockClosed);
       } else {
-        if (client) enqueueUpstream(() => client.sendText(message.content || ""));
+        currentQuery = message.content || "";
+        processIntent(currentQuery);
+      }
+    }
+
+    if (message.type === "action.execute") {
+      const action = message.action;
+      if (message.draft) routeDraft = mergeDrafts(routeDraft, message.draft);
+      if (action === "generate_route") {
+        const toolResult = generateRoute({ draft: routeDraft });
+        send({ type: "tool.result", tool: "generate_route", result: toolResult });
+        if (!MOCK_MODE && client) enqueueUpstream(() => client.sendText(buildVoiceReply("generate_route", toolResult)));
+      }
+      if (action === "nearby_food") {
+        const toolResult = recommendNearby({ currentLocation: routeDraft.destinations[0] || routeDraft.foodArea || "拙政园", category: "food" });
+        send({ type: "tool.result", tool: "nearby_recommend", result: toolResult });
+        if (!MOCK_MODE && client) enqueueUpstream(() => client.sendText(buildVoiceReply("nearby_recommend", toolResult)));
       }
     }
 
@@ -140,6 +209,65 @@ function runUpstreamAction(action, send) {
   } catch (error) {
     send({ type: "error", message: error.message || "语音桥接转发失败" });
   }
+}
+
+async function callTool(intent) {
+  if (!intent || intent.name === "smalltalk" || intent.name === "route_collect" || intent.name === "route_ready") return null;
+  if (intent.name === "generate_route" || intent.name === "finalize_route") return generateRoute(intent.params || {});
+  if (intent.name === "spot_explain") return explainSpot(intent.params || {});
+  if (intent.name === "nearby_recommend") return recommendNearby(intent.params || {});
+  return buildMockToolResult(intent);
+}
+
+function createEmptyRouteDraft() {
+  return {
+    destinations: [],
+    prefs: [],
+    days: "",
+    people: "",
+    startTime: "",
+    food: false,
+    foodArea: "",
+    allowClassicRoute: false,
+    acceptedSuggestedRoute: false,
+    preferLunchFirst: false,
+    day1AfternoonOnly: false,
+    dayConstraints: [],
+    status: "collecting",
+    routeTurns: 0,
+    currentRoute: null,
+    notes: [],
+  };
+}
+
+function buildConversationSuggestion(draft, intentName = "route_collect") {
+  const hasExplicitDuration = Boolean(draft.days);
+  const hasRouteSeed = draft.destinations.length > 0 || hasExplicitDuration || draft.prefs.length > 0 || draft.people;
+  const ready = hasRouteSeed && (draft.routeTurns >= 1 || intentName === "route_ready");
+  const actions = ready
+    ? [
+        { id: "generate_route", label: "生成路线", primary: true },
+        { id: "continue", label: "继续补充" },
+        { id: "nearby_food", label: "附近美食" },
+      ]
+    : [
+        { id: "continue", label: "继续补充", primary: true },
+        { id: "nearby_food", label: "附近美食" },
+      ];
+  return {
+    kind: ready ? "route_ready" : "route_collecting",
+    text: ready ? "这些信息已经可以生成一版路线了，你想现在怎么做？" : "我先帮你记录，等信息更完整后再生成路线。",
+    draft,
+    actions,
+  };
+}
+
+function buildRouteCollectReply(draft) {
+  const destinations = draft.destinations.length ? draft.destinations.join("、") : "还没确定具体景点";
+  const prefs = draft.prefs.length ? draft.prefs.join("、") : "还没说偏好";
+  const time = draft.startTime ? `，${draft.startTime}左右开始` : "";
+  const people = draft.people ? `，同行是${draft.people}` : "";
+  return `我先记下来：你想去${destinations}${time}${people}，偏好是${prefs}。你可以继续补充，也可以点页面里的按钮生成路线、查附近美食。`;
 }
 
 server.listen(PORT, () => {
@@ -198,104 +326,6 @@ function mockReply(send, query, isClosed) {
   };
 
   setTimeout(tick, 280);
-}
-
-function classifyMockIntent(query) {
-  if (/附近|美食|小吃|吃/.test(query)) {
-    return {
-      name: "nearby_recommend",
-      confidence: 0.92,
-      params: { category: "food", currentLocation: "拙政园" },
-    };
-  }
-  if (/讲|介绍|点位|与谁同坐轩|远香堂|小飞虹/.test(query)) {
-    return {
-      name: "spot_explain",
-      confidence: 0.9,
-      params: {
-        scenicArea: "拙政园",
-        spot: query.includes("小飞虹") ? "小飞虹" : query.includes("远香堂") ? "远香堂" : "与谁同坐轩",
-      },
-    };
-  }
-  if (/路线|安排|半天|一天|行程/.test(query)) {
-    return {
-      name: "generate_route",
-      confidence: 0.94,
-      params: {
-        days: query.includes("一天") ? "one_day" : "half_day",
-        prefs: ["园林", "美食", "少走路"],
-      },
-    };
-  }
-  return { name: "smalltalk", confidence: 0.68, params: {} };
-}
-
-function buildMockToolResult(intent) {
-  if (intent.name === "generate_route") {
-    return {
-      id: "classic_half_day",
-      title: "园林与古城轻松线",
-      summary: "适合想少走路、看园林、顺路吃苏州小吃的游客。",
-      preferences: ["半天", "园林", "美食", "少走路"],
-      note: "从拙政园开始，中午接平江路美食，节奏轻松。",
-      nodes: [
-        {
-          time: "09:30",
-          title: "拙政园",
-          description: "先看远香堂，再到与谁同坐轩听诗意讲解。",
-          action: { label: "开始导览", screen: "guide" },
-        },
-        {
-          time: "12:00",
-          title: "平江路",
-          description: "推荐苏式汤面、桂花糖粥，适合慢慢逛。",
-          action: { label: "查看推荐", screen: "nearby" },
-        },
-        {
-          time: "14:00",
-          title: "评弹茶馆",
-          description: "坐下来听一段江南声音，作为轻松收尾。",
-          action: { label: "加入行程", screen: "trip" },
-        },
-      ],
-    };
-  }
-
-  if (intent.name === "spot_explain") {
-    const text =
-      intent.params.spot === "小飞虹"
-        ? "小飞虹像一笔轻轻架在水面上的桥，走过它时，水、廊、亭会一层层换景。"
-        : intent.params.spot === "远香堂"
-          ? "远香堂取“香远益清”之意，是拙政园中部看水面与荷风的核心点。"
-          : "与谁同坐轩出自苏东坡的词，“与谁同坐？明月、清风、我。”它把诗意藏进扇形空间里。";
-    return { spot: intent.params.spot, text };
-  }
-
-  if (intent.name === "nearby_recommend") {
-    return {
-      title: "拙政园附近苏州小吃",
-      location: "平江路",
-      items: [
-        { title: "苏式汤面", description: "清汤细面，适合作为轻松午餐。", time: "12:10" },
-        { title: "桂花糖粥", description: "甜口小食，边走边吃很有苏州味。", time: "12:45" },
-        { title: "评弹茶馆", description: "吃完后坐一会儿，接江南文化体验。", time: "13:30" },
-      ],
-    };
-  }
-
-  return null;
-}
-
-function buildMockReply(intent, result) {
-  if (intent.name === "generate_route") {
-    return `好，我先帮你排一条轻松半天线：${result.title}。上午从拙政园开始，中午接到平江路吃苏州小吃，最后可以坐下来听一段评弹。`;
-  }
-  if (intent.name === "spot_explain") return result.text;
-  if (intent.name === "nearby_recommend") {
-    return `附近我推荐去${result.location}。可以先吃苏式汤面，再尝桂花糖粥，时间宽松的话，去评弹茶馆坐一会儿，很有苏州味。`;
-  }
-  return "可以呀。我是苏丽娘，你可以问我路线、园林故事、附近美食，或者让我把讲解说得更诗意一点。";
 }
 
 function sendJson(res, status, data) {

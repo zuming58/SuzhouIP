@@ -52,10 +52,9 @@
                 <div class="floating-status" id="status-label">等你提问</div>
                 <div class="home-panel">
                   <p class="prompt-title">今天想怎么逛苏州？</p>
-                  <div class="quick-input" data-go="ask" data-quick-question>问我路线、美食、天气或景点故事</div>
-                  <div class="home-actions">
-                    <button data-go="voice">实时语音</button>
-                    <button data-go="ask">问苏丽娘</button>
+                  <div class="quick-input" data-go="voice" data-quick-question>输入你想问苏丽娘的问题，或者按住说</div>
+                  <div class="home-actions home-actions-grid">
+                    <button data-go="voice">问苏丽娘</button>
                     <button data-go="route">定制路线</button>
                     <button data-go="nearby">附近推荐</button>
                     <button data-go="trip">我的行程</button>
@@ -66,7 +65,7 @@
               <section class="screen" data-screen="voice">
                 <div class="screen-head">
                   <button class="back" data-go="home">返回</button>
-                  <h2>实时语音</h2>
+                  <h2>问答</h2>
                   <button class="pill ghost" id="voice-bridge-mode">待连接</button>
                 </div>
                 <div class="voice-call">
@@ -82,56 +81,19 @@
                     <p id="voice-ai-text">我会根据你的问题推荐路线、讲解景点或查找附近美食。</p>
                   </div>
                   <div class="voice-actions">
-                    <button class="voice-talk-btn" type="button" data-voice-talk aria-label="按住说话">
-                      <span class="voice-talk-icon"></span>
-                    </button>
-                    <div class="voice-wave" id="voice-wave" aria-hidden="true">
-                      <span></span>
-                      <span></span>
-                      <span></span>
-                      <span></span>
-                      <span></span>
+                    <div class="voice-input-bar">
+                      <button class="voice-push-btn" type="button" data-voice-talk aria-label="按住说话">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                          <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                          <line x1="12" y1="19" x2="12" y2="23"></line>
+                          <line x1="8" y1="23" x2="16" y2="23"></line>
+                        </svg>
+                      </button>
+                      <input type="text" class="voice-text-input" id="voice-text-input" placeholder="输入你想问苏丽娘的问题..." />
+                      <button class="voice-send-btn" type="button" id="voice-send-btn">发送</button>
                     </div>
                   </div>
-                </div>
-              </section>
-
-              <section class="screen" data-screen="ask">
-                <div class="screen-head">
-                  <button class="back" data-go="home">返回</button>
-                  <h2>问苏丽娘</h2>
-                  <button class="pill ghost" data-language>中文</button>
-                </div>
-                <div class="mini-avatar">
-                  <div class="mini-video-stack" aria-hidden="true">
-                    <video class="mini-video ask-layer active" id="ask-mini-a" muted playsinline autoplay poster="../suliniang_project_materials/assets_3d_character_normalized/pose_listening.png" src="../suliniang_project_materials/assets_3d_character_videos/normalized/listening_loop.mp4"></video>
-                    <video class="mini-video ask-layer" id="ask-mini-b" muted playsinline poster="../suliniang_project_materials/assets_3d_character_normalized/pose_listening.png"></video>
-                  </div>
-                  <div>
-                    <span class="state-dot"></span>
-                    <p id="ask-state">正在倾听</p>
-                  </div>
-                </div>
-                <div class="chat-stack" id="chat-stack">
-                  <div class="bubble user">苏州有什么好吃的？我今天想逛得轻松一点。</div>
-                  <div class="bubble guide">
-                    <strong>我给你挑一条轻松的苏州味道线。</strong>
-                    <div class="food-grid">
-                      <span>苏式汤面</span>
-                      <span>桂花糖粥</span>
-                      <span>生煎</span>
-                      <span>松鼠桂鱼</span>
-                    </div>
-                    <div class="inline-actions">
-                      <button data-go="route">加入路线</button>
-                      <button data-go="nearby">附近看看</button>
-                    </div>
-                  </div>
-                </div>
-                <div class="composer">
-                  <input id="question-input" value="帮我安排半天苏州路线" aria-label="输入问题" />
-                  <button class="voice-btn" type="button" aria-label="语音输入">麦</button>
-                  <button data-ask-submit>发送</button>
                 </div>
               </section>
 
@@ -316,22 +278,10 @@
             <div class="control-grid">
               <button data-go="welcome">欢迎</button>
               <button data-go="home">主页</button>
-              <button data-go="voice">语音</button>
-              <button data-go="ask">问答</button>
+              <button data-go="voice">问答</button>
               <button data-go="route">路线</button>
               <button data-go="guide">导览</button>
               <button data-go="nearby">附近</button>
-            </div>
-          </div>
-          <div class="panel-card">
-            <p class="panel-title">数字人状态</p>
-            <div class="control-grid">
-              <button data-video="idle_loop.mp4" data-state="等你提问">idle</button>
-              <button data-video="listening_loop.mp4" data-state="正在倾听">listen</button>
-              <button data-video="thinking_loop.mp4" data-state="正在思考">think</button>
-              <button data-video="speaking_loop.mp4" data-state="正在讲解">speak</button>
-              <button data-video="guide_once.mp4" data-state="引导景点">guide</button>
-              <button data-video="smile_once.mp4" data-state="讲解完成">smile</button>
             </div>
           </div>
           <div class="panel-card">
