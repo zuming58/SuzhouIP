@@ -574,14 +574,24 @@ function markVoiceSpeaking(text = "\u82cf\u4e3d\u5a18\u6b63\u5728\u64ad\u62a5") 
   }, 90000);
 }
 
-function scheduleVoiceIdleAfterPlayback(text = "\u53ef\u4ee5\u7ee7\u7eed\u8ffd\u95ee") {
+function scheduleVoiceIdleAfterPlayback(text = "可以继续追问") {
   clearVoiceIdleTimer();
   clearVoicePlaybackIdleTimer();
   const now = voiceAudioContext?.currentTime || 0;
-  const remainingMs = Math.min(8000, Math.max(500, (voicePlaybackTime - now) * 1000 + 500));
+  // 移除8秒硬上限，按实际剩余播放时间调度
+  // 避免长文本播报还在播放但视频已经切回 idle 的问题
+  const remainingMs = Math.max(500, (voicePlaybackTime - now) * 1000 + 500);
+  // 双重保险：就算计算有误，最多也等90秒，防止永远卡死在说话状态
+  const safeDelay = Math.min(remainingMs, 90000);
   voicePlaybackIdleTimer = window.setTimeout(() => {
-    forceVoiceIdle(text);
-  }, remainingMs);
+    // 执行前再检查一次：如果还在播放就重新调度
+    const checkNow = voiceAudioContext?.currentTime || 0;
+    if (voicePlaybackTime - checkNow > 0.5) {
+      scheduleVoiceIdleAfterPlayback(text);
+    } else {
+      forceVoiceIdle(text);
+    }
+  }, safeDelay);
 }
 
 function requestVoiceState(state, text, options = {}) {
